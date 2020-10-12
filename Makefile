@@ -26,7 +26,7 @@ build-docker: clean
 	docker rm $$cnt ; docker rmi $$img
 
 dist/tracee: $(SRC) tracee/event_monitor_ebpf.c
-	GOOS=linux go build -v -o dist/tracee -ldflags "-X github.com/aquasecurity/tracee/tracee.ebpfProgramBase64Injected=$(ebpfProgramBase64)"
+	GOOS=linux go build -v -o dist/tracee -ldflags "-extldflags=-static -X github.com/aquasecurity/tracee/tracee.ebpfProgramBase64Injected=$(ebpfProgramBase64)"
 
 .PHONY: test
 test:
