@@ -1,11 +1,11 @@
 OUTPUT := .output
 TARGET := event_monitor_ebpf
 KERN_RELEASE := $(shell uname -r)
-KERN_SRC := /lib/modules/$(KERN_RELEASE)/build
-ARCH := $(shell uname -m | sed 's/x86_64/x86/')
-LLC ?= llc
-CLANG ?= clang
-LLVM_STRIP ?= llvm-strip
+KERN_SRC := /thesis/pixel3a/android-kernel/private/msm-google
+ARCH := arm64
+LLC ?= llc-10
+CLANG ?= clang-10
+LLVM_STRIP ?= llvm-strip-10
 BPF_C = tracee/${TARGET:=.c}
 BPF_OBJ = ${OUTPUT}/${TARGET:=.o}
 LIBBPF_SRC = $(abspath 3rdparty/libbpf/src)
@@ -109,4 +109,4 @@ $(BPF_OBJ): ${BPF_C} $(LIBBPF_OBJ) | ${OUTPUT}
 		-nostdinc \
 		-O2 -emit-llvm -c -g $< -o ${@:.o=.ll}
 	$(LLC) -march=bpf -filetype=obj -o $@ ${@:.o=.ll}
-	$(LLVM_STRIP) -g $@
+	#$(LLVM_STRIP) -g $@

@@ -29,7 +29,7 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 
-#define PT_REGS_PARM6(ctx)  ((ctx)->r9)
+//#define PT_REGS_PARM6(ctx)  ((ctx)->r9)
 
 #define MAX_PERCPU_BUFSIZE  (1 << 15)     // This value is actually set by the kernel as an upper bound
 #define MAX_STRING_SIZE     4096          // Choosing this value to be the same as PATH_MAX
@@ -140,8 +140,8 @@ BPF_MAP(_name, BPF_MAP_TYPE_PROG_ARRAY, u32, u32, _max_entries);
 #define BPF_PERF_OUTPUT(_name) \
 BPF_MAP(_name, BPF_MAP_TYPE_PERF_EVENT_ARRAY, int, __u32, 1024);
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 14, 0)
-#error Minimal required kernel version is 4.14
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0)
+#error Minimal required kernel version is 4.9
 #endif
 
 /*=============================== INTERNAL STRUCTS ===========================*/
@@ -304,17 +304,20 @@ static __always_inline u32 get_task_ppid(struct task_struct *task)
 
 static __always_inline bool is_x86_compat(struct task_struct *task)
 {
-    return READ_KERN(task->thread_info.status) & TS_COMPAT;
+    //return READ_KERN(task->thread_info.status) & TS_COMPAT;
+    return false;
 }
 
+/*
 static __always_inline struct pt_regs* get_task_pt_regs(struct task_struct *task)
 {
     void* __ptr = READ_KERN(task->stack) + THREAD_SIZE - TOP_OF_KERNEL_STACK_PADDING;
     return ((struct pt_regs *)__ptr) - 1;
 }
-
+*/
 static __always_inline int get_syscall_ev_id_from_regs()
 {
+	/*
     struct task_struct *task = (struct task_struct *)bpf_get_current_task();
     struct pt_regs *real_ctx = get_task_pt_regs(task);
     int syscall_nr = READ_KERN(real_ctx->orig_ax);
@@ -329,6 +332,8 @@ static __always_inline int get_syscall_ev_id_from_regs()
     }
 
     return syscall_nr;
+    */
+    return 0;
 }
 
 static __always_inline struct dentry* get_mnt_root_ptr_from_vfsmnt(struct vfsmount *vfsmnt)
@@ -877,19 +882,22 @@ static __always_inline int save_args_from_regs(struct pt_regs *ctx, u32 event_id
 
     struct task_struct *task = (struct task_struct *)bpf_get_current_task();
     if (is_x86_compat(task) && is_syscall) {
+	    /*
         args.args[0] = ctx->bx;
         args.args[1] = ctx->cx;
         args.args[2] = ctx->dx;
         args.args[3] = ctx->si;
         args.args[4] = ctx->di;
         args.args[5] = ctx->bp;
+	*/
     } else {
         args.args[0] = PT_REGS_PARM1(ctx);
         args.args[1] = PT_REGS_PARM2(ctx);
         args.args[2] = PT_REGS_PARM3(ctx);
         args.args[3] = PT_REGS_PARM4(ctx);
         args.args[4] = PT_REGS_PARM5(ctx);
-        args.args[5] = PT_REGS_PARM6(ctx);
+        //args.args[5] = PT_REGS_PARM6(ctx);
+        args.args[5] = 0;
     }
 
     return save_args(&args, event_id);
@@ -1122,12 +1130,20 @@ struct bpf_raw_tracepoint_args *ctx
 #endif
 )
 {
-    struct pt_regs regs = {};
+    //struct pt_regs regs = {};
+    args_t args_cp = {};
     int id;
     struct task_struct *task = (struct task_struct *)bpf_get_current_task();
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 17, 0)
     void *ctx = args;
+    args_cp.args[0] = args->args[0];
+    args_cp.args[1] = args->args[1];
+    args_cp.args[2] = args->args[2];
+    args_cp.args[3] = args->args[3];
+    args_cp.args[4] = args->args[4];
+    args_cp.args[5] = args->args[5];
+    /*
     if (!is_x86_compat(task)) {
         regs.di = args->args[0];
         regs.si = args->args[1];
@@ -1143,6 +1159,7 @@ struct bpf_raw_tracepoint_args *ctx
         regs.di = args->args[4];
         regs.bp = args->args[5];
     }
+    */
     id = args->id;
 #else
     bpf_probe_read(&regs, sizeof(struct pt_regs), (void*)ctx->args[0]);
@@ -1191,7 +1208,8 @@ struct bpf_raw_tracepoint_args *ctx
 
     // exit, exit_group and rt_sigreturn syscalls don't return - don't save args for them
     if (id != SYS_EXIT && id != SYS_EXIT_GROUP && id != SYS_RT_SIGRETURN) {
-        save_args_from_regs(&regs, id, true);
+        //save_args_from_regs(&regs, id, true);
+        save_args(&args_cp, id);
     }
 
     // call syscall handler, if exists
@@ -1548,6 +1566,7 @@ int BPF_KPROBE(send_bin)
     // 2. We can have multiple cpus - need percpu array
     // 3. We have to use perf submit and not maps as data can be overriden if userspace doesn't consume it fast enough
 
+	return 0;
     int i = 0;
     unsigned int chunk_size;
     u64 id = bpf_get_current_pid_tgid();
@@ -1660,6 +1679,7 @@ static __always_inline int do_vfs_write_writev(struct pt_regs *ctx, u32 event_id
     args_t saved_args;
     bool has_filter = false;
 
+    return 0;
     bool delete_args = false;
     if (load_args(&saved_args, delete_args, event_id) != 0) {
         // missed entry or not traced
@@ -1718,6 +1738,7 @@ static __always_inline int do_vfs_write_writev_tail(struct pt_regs *ctx, u32 eve
     struct iovec *vec;
     unsigned long vlen;
 
+    return 0;
     buf_t *submit_p = get_buf(SUBMIT_BUF_IDX);
     if (submit_p == NULL)
         return 0;
