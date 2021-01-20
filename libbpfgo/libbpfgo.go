@@ -375,6 +375,15 @@ func (b *BPFMap) Update(key, value interface{}) error {
 	return nil
 }
 
+func (m *Module) PinMap(mapName string, pinning string) error {
+	fmt.Println("Pinning Map")
+	cs := C.CString(mapName)
+	path := C.CString(pinning)
+	bpfMap := C.bpf_object__find_map_by_name(m.obj, cs)
+	C.bpf_map__pin(bpfMap, path)
+	return nil
+}
+
 func (m *Module) GetProgram(progName string) (*BPFProg, error) {
 	cs := C.CString(progName)
 	prog := C.bpf_object__find_program_by_name(m.obj, cs)

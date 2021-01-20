@@ -34,6 +34,9 @@ type TraceeConfig struct {
 	maxPidsCache          int // maximum number of pids to cache per mnt ns (in Tracee.pidsInMntns)
 	BPFObjPath            string
 	StackAddresses        bool
+	PinObjectType         string
+	PinObjectName         string
+	PinPath               string
 }
 
 type Filter struct {
@@ -751,6 +754,18 @@ func (t *Tracee) initBPF(bpfObjectPath string) error {
 	err = t.bpfModule.BPFLoadObject()
 	if err != nil {
 		return err
+	}
+
+	if t.config.PinObjectName != "" && t.config.PinObjectType != "" && t.config.PinPath != "" {
+		if t.config.PinObjectType == "map" {
+			_, err = t.bpfModule.GetMap(t.config.PinObjectName)
+			fmt.Println("Found Map")
+			fmt.Println(t.config.PinObjectName)
+			if err != nil {
+				return err
+			}
+			t.bpfModule.PinMap(t.config.PinObjectName, t.config.PinPath)
+		}
 	}
 
 	err = t.populateBPFMaps()
