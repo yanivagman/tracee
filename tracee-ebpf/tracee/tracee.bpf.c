@@ -43,6 +43,14 @@
 #include <linux/kconfig.h>
 #include <linux/version.h>
 
+#define KBUILD_MODNAME "tracee"
+#include <linux/if_ether.h>
+#include <linux/in.h>
+#include <linux/ip.h>
+#include <linux/ipv6.h>
+#include <linux/pkt_cls.h>
+#include <linux/tcp.h>
+
 #undef container_of
 //#include "bpf_core_read.h"
 #include <bpf_helpers.h>
@@ -324,6 +332,13 @@ typedef struct local_net_id_v6 {
     u16 protocol;
 } local_net_id_v6_t;
 
+struct packet_t {
+  struct in6_addr src_addr, dst_addr;
+  __be16 src_port, dst_port;
+  u8 protocol;
+  uint64_t ts;
+};
+
 /*================================ KERNEL STRUCTS =============================*/
 
 struct mnt_namespace {
@@ -375,6 +390,7 @@ BPF_STACK_TRACE(stack_addresses, MAX_STACK_ADDRESSES);  // Used to store stack t
 
 BPF_PERF_OUTPUT(events);                            // Events submission
 BPF_PERF_OUTPUT(file_writes);                       // File writes events submission
+BPF_PERF_OUTPUT(net_events);                        // Netowrk events submission
 
 /*================== KERNEL VERSION DEPENDANT HELPER FUNCTIONS =================*/
 
@@ -1786,6 +1802,7 @@ int tracepoint__raw_syscalls__sys_exit(struct bpf_raw_tracepoint_args *ctx)
         }
     }
 
+    // todo: implement this as a tail call (if possible)
     else if (id == CONNECT_SYSCALL && (ret == 0)) {
         u64 sock_address = 0;
         struct sock *sk;
@@ -1818,7 +1835,7 @@ int tracepoint__raw_syscalls__sys_exit(struct bpf_raw_tracepoint_args *ctx)
 
                 net_conn_v4_t net_details = {};
 
-                get_network_details_from_sock_v4(sk, &net_details, 1);
+                get_network_details_from_sock_v4(sk, &net_details, 0);
 
                 struct sockaddr_in remote;
                 remote.sin_family = family;
@@ -1830,8 +1847,8 @@ int tracepoint__raw_syscalls__sys_exit(struct bpf_raw_tracepoint_args *ctx)
                 local.sin_port = net_details.local_port;
                 local.sin_addr.s_addr = net_details.local_address;
 
-                save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(0, *tags));
-                save_to_submit_buf(submit_p, (void *)&remote, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(1, *tags));
+                save_to_submit_buf(submit_p, (void *)&remote, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(0, *tags));
+                save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(1, *tags));
 
                 if ( net_details.local_address && net_details.local_port ){
                     network_to_host_v4(&net_details);
@@ -1841,6 +1858,7 @@ int tracepoint__raw_syscalls__sys_exit(struct bpf_raw_tracepoint_args *ctx)
                     connect_id.port = net_details.local_port;
                     connect_id.protocol = get_sock_protocol(sk);
 
+                    // Todo: handle removal from this map! (same for all other places in code that add to this map)
                     bpf_map_update_elem(&network_map_v4, &connect_id, &context.host_tid, BPF_ANY);
                 }
 
@@ -1848,7 +1866,7 @@ int tracepoint__raw_syscalls__sys_exit(struct bpf_raw_tracepoint_args *ctx)
             else if ( family == AF_INET6 ) {
                 net_conn_v6_t net_details = {};
 
-                get_network_details_from_sock_v6(sk, &net_details, 1);
+                get_network_details_from_sock_v6(sk, &net_details, 0);
 
                 struct sockaddr_in6 local;
                 local.sin6_family = family;
@@ -1864,8 +1882,8 @@ int tracepoint__raw_syscalls__sys_exit(struct bpf_raw_tracepoint_args *ctx)
                 remote.sin6_addr = net_details.remote_address;
                 remote.sin6_scope_id = net_details.scope_id;
 
-                save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(0, *tags));
-                save_to_submit_buf(submit_p, (void *)&remote, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(1, *tags));
+                save_to_submit_buf(submit_p, (void *)&remote, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(0, *tags));
+                save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(1, *tags));
 
                 if ( net_details.local_address.s6_addr && net_details.local_port ){
 
@@ -3164,6 +3182,183 @@ int BPF_KPROBE(trace_mprotect_alert)
     }
 
     return 0;
+}
+
+static __always_inline bool skb_revalidate_data(struct __sk_buff *skb, uint8_t **head, uint8_t **tail, const u32 offset) {
+    if (*head + offset > *tail) {
+        if (bpf_skb_pull_data(skb, offset) < 0) {
+            return false;
+        }
+
+        *head = (uint8_t *)(long)skb->data;
+        *tail = (uint8_t *)(long)skb->data_end;
+
+        if (*head + offset > *tail) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static __always_inline int tc_probe(struct __sk_buff *skb, bool ingress) {
+    uint8_t *head = (uint8_t *)(long)skb->data;
+    uint8_t *tail = (uint8_t *)(long)skb->data_end;
+
+    if (head + sizeof(struct ethhdr) > tail) {
+        return TC_ACT_OK;
+    }
+
+    struct ethhdr *eth = (void *)head;
+    struct packet_t pkt = {0};
+
+    uint32_t l4_hdr_off;
+
+    switch (bpf_ntohs(eth->h_proto)) {
+    case ETH_P_IP:
+        l4_hdr_off = sizeof(struct ethhdr) + sizeof(struct iphdr);
+
+        if (!skb_revalidate_data(skb, &head, &tail, l4_hdr_off)) {
+            return TC_ACT_OK;
+        }
+
+        struct iphdr *ip = (void *)head + sizeof(struct ethhdr);
+
+        // Create a IPv4-Mapped IPv6 Address
+        pkt.src_addr.in6_u.u6_addr32[3] = ip->saddr;
+        pkt.dst_addr.in6_u.u6_addr32[3] = ip->daddr;
+
+        pkt.src_addr.in6_u.u6_addr16[5] = 0xffff;
+        pkt.dst_addr.in6_u.u6_addr16[5] = 0xffff;
+
+        pkt.protocol = ip->protocol;
+        pkt.ts = bpf_ktime_get_ns();
+
+        //todo: support other transport protocols?
+        if (pkt.protocol == IPPROTO_TCP) {
+            if (!skb_revalidate_data(skb, &head, &tail, l4_hdr_off + sizeof(struct tcphdr))) {
+                return TC_ACT_OK;
+            }
+
+            struct tcphdr *tcp = (void *)head + l4_hdr_off;
+
+            pkt.src_port = tcp->source;
+            pkt.dst_port = tcp->dest;
+        } else if (pkt.protocol == IPPROTO_UDP) {
+            if (!skb_revalidate_data(skb, &head, &tail, l4_hdr_off + sizeof(struct udphdr))) {
+                return TC_ACT_OK;
+            }
+
+            // Todo: not all UDP flows are supported now, as we only trace connect and accept (need to add sendmsg, recvmsg)
+            struct udphdr *udp = (void *)head + l4_hdr_off;
+
+            pkt.src_port = udp->source;
+            pkt.dst_port = udp->dest;
+        } else {
+            return TC_ACT_OK;
+        }
+
+        local_net_id_v4_t connect_id_v4 = {};
+        connect_id_v4.protocol = pkt.protocol;
+        connect_id_v4.address = __bpf_ntohl(pkt.src_addr.in6_u.u6_addr32[3]);
+        connect_id_v4.port = __bpf_ntohs(pkt.src_port);
+        u32 *tid = bpf_map_lookup_elem(&network_map_v4, &connect_id_v4);
+        if (tid == NULL) {
+            connect_id_v4.address = __bpf_ntohl(pkt.dst_addr.in6_u.u6_addr32[3]);
+            connect_id_v4.port = __bpf_ntohs(pkt.dst_port);
+            tid = bpf_map_lookup_elem(&network_map_v4, &connect_id_v4);
+            if (tid == NULL) {
+                return TC_ACT_OK;
+            }
+        }
+
+        break;
+    case ETH_P_IPV6:
+        l4_hdr_off = sizeof(struct ethhdr) + sizeof(struct ipv6hdr);
+
+        if (!skb_revalidate_data(skb, &head, &tail, l4_hdr_off)) {
+            return TC_ACT_OK;
+        }
+
+        struct ipv6hdr *ip6 = (void *)head + sizeof(struct ethhdr);
+
+        pkt.src_addr = ip6->saddr;
+        pkt.dst_addr = ip6->daddr;
+
+        pkt.protocol = ip6->nexthdr;
+        pkt.ts = bpf_ktime_get_ns();
+
+        //todo: support other protocols?
+        if (pkt.protocol == IPPROTO_TCP) {
+            if (!skb_revalidate_data(skb, &head, &tail, l4_hdr_off + sizeof(struct tcphdr))) {
+                return TC_ACT_OK;
+            }
+
+            struct tcphdr *tcp = (void *)head + l4_hdr_off;
+
+            pkt.src_port = tcp->source;
+            pkt.dst_port = tcp->dest;
+        } else if (pkt.protocol == IPPROTO_UDP) {
+            if (!skb_revalidate_data(skb, &head, &tail, l4_hdr_off + sizeof(struct udphdr))) {
+                return TC_ACT_OK;
+            }
+
+            struct udphdr *udp = (void *)head + l4_hdr_off;
+
+            pkt.src_port = udp->source;
+            pkt.dst_port = udp->dest;
+        } else {
+            return TC_ACT_OK;
+        }
+
+        // todo: verify that we capture ipv6 traffic correctly
+        local_net_id_v6_t connect_id_v6 = {};
+        connect_id_v6.protocol = pkt.protocol;
+        connect_id_v6.address = pkt.src_addr;
+        connect_id_v6.port = __bpf_ntohs(pkt.src_port);
+        tid = bpf_map_lookup_elem(&network_map_v6, &connect_id_v6);
+        if (tid == NULL) {
+            connect_id_v6.address = pkt.dst_addr;
+            connect_id_v6.port = __bpf_ntohs(pkt.dst_port);
+            tid = bpf_map_lookup_elem(&network_map_v6, &connect_id_v6);
+            if (tid == NULL) {
+                return TC_ACT_OK;
+            }
+        }
+
+        break;
+    default:
+        return TC_ACT_OK;
+    }
+
+    /* The tc perf_event_output handler will use the upper 32 bits
+     * of the flags argument as a number of bytes to include of the
+     * packet payload in the event data. If the size is too big, the
+     * call to bpf_perf_event_output will fail and return -EFAULT.
+     *
+     * See bpf_skb_event_output in net/core/filter.c.
+     *
+     */
+
+    u64 flags = BPF_F_CURRENT_CPU;
+    flags |= (u64)skb->len << 32;
+
+    if (bpf_perf_event_output(skb, &net_events, flags, &pkt,
+                               sizeof(pkt)) < 0) {
+      return TC_ACT_OK;
+    }
+
+    return TC_ACT_OK;
+}
+
+SEC("classifier")
+int tc_egress(struct __sk_buff *skb) {
+    return tc_probe(skb, false);
+}
+
+SEC("classifier")
+int tc_ingress(struct __sk_buff *skb) {
+    return tc_probe(skb, true);
 }
 
 char LICENSE[] SEC("license") = "GPL";
