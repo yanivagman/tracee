@@ -155,6 +155,8 @@ const (
 	MagicWriteEventID
 	SecuritySocketConnectEventID
 	SecuritySocketAcceptEventID
+	RetConnectEventID
+	RetAcceptEventID
 	MaxEventID
 )
 
@@ -529,6 +531,8 @@ var EventsIDToEvent = map[int32]EventConfig{
 	MagicWriteEventID:          	{ID: MagicWriteEventID, ID32Bit: sys32undefined, Name: "magic_write", Probes: []probe{}, Sets: []string{}},
 	SecuritySocketConnectEventID:	{ID: SecuritySocketConnectEventID, ID32Bit: sys32undefined, Name: "security_socket_connect", Probes: []probe{{event: "security_socket_connect", attach: kprobe, fn: "trace_security_socket_connect"}}, Sets: []string{"default"}},
 	SecuritySocketAcceptEventID:	{ID: SecuritySocketAcceptEventID, ID32Bit: sys32undefined, Name: "security_socket_accept", Probes: []probe{{event: "security_socket_accept", attach: kprobe, fn: "trace_security_socket_accept"}}, Sets: []string{"default"}},
+	RetConnectEventID:				{ID: RetConnectEventID, ID32Bit: sys32undefined, Name: "ret_connect", Probes: []probe{}, Sets: []string{"default"}},
+	RetAcceptEventID:				{ID: RetAcceptEventID, ID32Bit: sys32undefined, Name: "ret_accept", Probes: []probe{}, Sets: []string{"default"}},
 }
 
 // EventsIDToParams is list of the parameters (name and type) used by the events
@@ -889,5 +893,7 @@ var EventsIDToParams = map[int32][]external.ArgMeta{
 	SwitchTaskNSEventID:        	{{Type: "pid_t", Name: "pid"}, {Type: "u32", Name: "new_mnt"}, {Type: "u32", Name: "new_pid"}, {Type: "u32", Name: "new_uts"}, {Type: "u32", Name: "new_ipc"}, {Type: "u32", Name: "new_net"}, {Type: "u32", Name: "new_cgroup"}},
 	MagicWriteEventID:          	{{Type: "const char*", Name: "pathname"}, {Type: "bytes", Name: "bytes"}},
 	SecuritySocketConnectEventID:	{{Type: "int", Name: "dst_addr"}, {Type: "int", Name: "dst_port"}},
-	SecuritySocketAcceptEventID:	{{Type: "int", Name: "dst_addr"}, {Type: "", Name: "dst_port"}},
+	SecuritySocketAcceptEventID:	{{Type: "int", Name: "dst_addr"}, {Type: "", Name: "dst_port"}, {Type: "int", Name: "src_addr"}, {Type: "", Name: "src_port"}},
+	RetConnectEventID:				{{Type: "int", Name: "src_addr"}, {Type: "", Name: "src_port"}},
+	RetAcceptEventID:				{{Type: "int", Name: "src_addr"}, {Type: "", Name: "src_port"}},
 }
