@@ -45,12 +45,20 @@ Copyright (C) Aqua Security inc.
 #include <net/sock.h>
 #include <net/inet_sock.h>
 #include <net/ipv6.h>
+#include <net/tcp_states.h>
 #include <linux/ipv6.h>
 
 #include <uapi/linux/bpf.h>
 #include <linux/bpf.h>
 #include <linux/kconfig.h>
 #include <linux/version.h>
+
+#include <linux/if_ether.h>
+#include <linux/in.h>
+#include <linux/ip.h>
+#include <linux/ipv6.h>
+#include <linux/pkt_cls.h>
+#include <linux/tcp.h>
 
 #else
 //CO:RE is enabled
@@ -181,7 +189,12 @@ extern bool CONFIG_ARCH_HAS_SYSCALL_WRAPPER __kconfig;
 #define SECURITY_SB_MOUNT       1022
 #define SECURITY_BPF            1023
 #define SECURITY_BPF_MAP        1024
-#define MAX_EVENT_ID            1025
+#define UDP_SENDMSG             1025
+#define UDP_DISCONNECT          1026
+#define UDP_DESTROY_SOCK        1027
+#define UDPV6_DESTROY_SOCK      1028
+#define INET_SOCK_SET_STATE     1029
+#define MAX_EVENT_ID            1030
 
 #define CONFIG_SHOW_SYSCALL         1
 #define CONFIG_EXEC_ENV             2
@@ -375,6 +388,8 @@ typedef struct network_connection_v6 {
     u16 local_port;
     struct in6_addr remote_address;
     u16 remote_port;
+    u32 flowinfo;
+    u32 scope_id;
 } net_conn_v6_t;
 
 // For a good summary about capabilities, see https://lwn.net/Articles/636533/
@@ -393,6 +408,19 @@ typedef struct slim_cred {
     u64    cap_bset;        /* capability bounding set */
     u64    cap_ambient;     /* Ambient capability set */
 } slim_cred_t;
+
+typedef struct local_net_id {
+    struct in6_addr address;
+    u16 port;
+    u16 protocol;
+} local_net_id_t;
+
+struct packet_t {
+  struct in6_addr src_addr, dst_addr;
+  __be16 src_port, dst_port;
+  u8 protocol;
+  uint64_t ts;
+};
 
 /*================================ KERNEL STRUCTS =============================*/
 
@@ -433,6 +461,9 @@ BPF_HASH(sys_32_to_64_map, u32, u32);                   // Map 32bit syscalls nu
 BPF_HASH(params_types_map, u32, u64);                   // Encoded parameters types for event
 BPF_HASH(params_names_map, u32, u64);                   // Encoded parameters names for event
 BPF_HASH(sockfd_map, u32, u32);                         // Persist sockfd from syscalls to be used in the corresponding lsm hooks
+// todo: use LRU hash map
+BPF_HASH(network_map, local_net_id_t, u32);             // network identifier to context
+BPF_HASH(sock_ptr_map, u64, local_net_id_t);            // sock address to network identifier
 BPF_ARRAY(file_filter, path_filter_t, 3);               // Used to filter vfs_write events
 BPF_ARRAY(string_store, path_filter_t, 1);              // Store strings from userspace
 BPF_PERCPU_ARRAY(bufs, buf_t, MAX_BUFFERS);             // Percpu global buffer variables
@@ -446,6 +477,7 @@ BPF_STACK_TRACE(stack_addresses, MAX_STACK_ADDRESSES);  // Used to store stack t
 
 BPF_PERF_OUTPUT(events);                            // Events submission
 BPF_PERF_OUTPUT(file_writes);                       // File writes events submission
+BPF_PERF_OUTPUT(net_events);                        // Netowrk events submission
 
 /*================== KERNEL VERSION DEPENDANT HELPER FUNCTIONS =================*/
 
@@ -737,6 +769,11 @@ static __always_inline u16 get_inet_sport(struct inet_sock *inet)
     return READ_KERN(inet->inet_sport);
 }
 
+static __always_inline u16 get_inet_num(struct inet_sock *inet)
+{
+    return READ_KERN(inet->inet_num);
+}
+
 static __always_inline u16 get_inet_dport(struct inet_sock *inet)
 {
     return READ_KERN(inet->inet_dport);
@@ -750,6 +787,31 @@ static __always_inline struct sock* get_socket_sock(struct socket *socket)
 static __always_inline u16 get_sock_family(struct sock *sock)
 {
     return READ_KERN(sock->sk_family);
+}
+
+static __always_inline u16 get_sock_protocol(struct sock *sock)
+{
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 6, 0))
+    /* kernel 4.18-5.5:
+
+    this is a workaround for reading sk_protocol bit-field, because bpf_probe_read doesn't really support reading
+    this type of fields. so we use the sk_gso_max_segs field and go 24 bits backwards (i.e. 3 bytes) because
+    sk_type is 16 bits, and sk_protocol is 8 bits (i.e. 1 byte).
+
+    note: we define protocol as u16 so it'll be compatible with newer kernels.
+    */
+
+    u16 protocol = 0;
+    bpf_probe_read(&protocol, 1, (void *)((long)&sock->sk_gso_max_segs) - 3);
+
+    // we have to shift right 8 bits because in these kernel versions 'protocol' is only 8 bits.
+    protocol = protocol >> 8;
+
+    return protocol;
+#else
+    // kernel 5.6 onwards:
+    return READ_KERN(sock->sk_protocol);
+#endif
 }
 
 static __always_inline u16 get_sockaddr_family(struct sockaddr *address)
@@ -767,23 +829,19 @@ static __always_inline struct in6_addr get_ipv6_pinfo_saddr(struct ipv6_pinfo *n
     return READ_KERN(np->saddr);
 }
 
+static __always_inline u32 get_ipv6_pinfo_flow_label(struct ipv6_pinfo *np)
+{
+    return READ_KERN(np->flow_label);
+}
+
 static __always_inline struct in6_addr get_sock_v6_daddr(struct sock *sock)
 {
     return READ_KERN(sock->sk_v6_daddr);
 }
 
-static __always_inline volatile unsigned char get_sock_state(struct sock *sock)
+static __always_inline int get_sock_bound_dev_if(struct sock *sock)
 {
-    // return READ_KERN(sock->sk_state);
-
-    volatile unsigned char sk_state_own_impl;
-    bpf_probe_read((void *)&sk_state_own_impl, sizeof(sk_state_own_impl), (const void *)&sock->sk_state);
-    return sk_state_own_impl;
-}
-
-static __always_inline struct ipv6_pinfo* get_inet_pinet6(struct inet_sock *inet)
-{
-    return READ_KERN(inet->pinet6);
+    return READ_KERN(sock->sk_bound_dev_if);
 }
 
 /*============================== HELPER FUNCTIONS ==============================*/
@@ -1700,51 +1758,35 @@ int trace_ret_##name(void *ctx)                                         \
     return trace_ret_generic(ctx, id, types, tags, &args, ret);         \
 }
 
-static __always_inline void network_to_host_v4(net_conn_v4_t *net_details)
-{
-    net_details->local_address = __bpf_ntohl(net_details->local_address);
-    net_details->local_port = __bpf_ntohs(net_details->local_port);
-    net_details->remote_address = __bpf_ntohl(net_details->remote_address);
-    net_details->remote_port = __bpf_ntohs(net_details->remote_port);
-}
-
 static __always_inline int get_network_details_from_sock_v4(struct sock *sk, net_conn_v4_t *net_details, int peer)
 {
     struct inet_sock *inet = inet_sk(sk);
 
-    u32 addr = 0;
-    addr = get_inet_rcv_saddr(inet);
-    if ( !addr ) {
-        addr = get_inet_saddr(inet);
-    }
-
-    if ( peer ) {
-
-        net_details->local_address = get_inet_daddr(inet);
-        net_details->local_port = get_inet_dport(inet);
-        net_details->remote_address = addr;
-        net_details->remote_port = get_inet_sport(inet);
-
-    }
-    else {
-
-        net_details->local_address = addr;
-        net_details->local_port = get_inet_sport(inet);
+    if (!peer) {
+        net_details->local_address = get_inet_rcv_saddr(inet);
+        net_details->local_port = bpf_ntohs(get_inet_num(inet));
         net_details->remote_address = get_inet_daddr(inet);
         net_details->remote_port = get_inet_dport(inet);
-
+    }
+    else {
+        net_details->remote_address = get_inet_rcv_saddr(inet);
+        net_details->remote_port = bpf_ntohs(get_inet_num(inet));
+        net_details->local_address = get_inet_daddr(inet);
+        net_details->local_port = get_inet_dport(inet);
     }
 
     return 0;
 }
 
-static __always_inline struct ipv6_pinfo *inet6_sk_own_impl(struct sock *__sk, struct inet_sock *inet)
+static __always_inline struct ipv6_pinfo *inet6_sk_own_impl(const struct sock *__sk, struct inet_sock *inet)
 {
     volatile unsigned char sk_state_own_impl;
-    sk_state_own_impl = get_sock_state(__sk);
+    bpf_probe_read((void *)&sk_state_own_impl, sizeof(sk_state_own_impl), (const void *)&__sk->sk_state);
+//    sk_state_own_impl = (void *)get_sock_state(__sk);
 
     struct ipv6_pinfo *pinet6_own_impl;
-    pinet6_own_impl = get_inet_pinet6(inet);
+    bpf_probe_read(&pinet6_own_impl, sizeof(pinet6_own_impl), &inet->pinet6);
+//    pinet6_own_impl = get_inet_pinet6(inet);
 
     bool sk_fullsock = (1 << sk_state_own_impl) & ~(TCPF_TIME_WAIT | TCPF_NEW_SYN_RECV);
     return sk_fullsock ? pinet6_own_impl : NULL;
@@ -1752,6 +1794,12 @@ static __always_inline struct ipv6_pinfo *inet6_sk_own_impl(struct sock *__sk, s
 
 static __always_inline int get_network_details_from_sock_v6(struct sock *sk, net_conn_v6_t *net_details, int peer)
 {
+
+    /*
+    this function is inspired by the 'inet6_getname(struct socket *sock, struct sockaddr *uaddr, int peer)' function.
+    reference: 'https://elixir.bootlin.com/linux/latest/source/net/ipv6/af_inet6.c#L509'.
+    */
+
     struct inet_sock *inet = inet_sk(sk);
     struct ipv6_pinfo *np = inet6_sk_own_impl(sk, inet);
 
@@ -1761,12 +1809,29 @@ static __always_inline int get_network_details_from_sock_v6(struct sock *sk, net
         addr = get_ipv6_pinfo_saddr(np);
     }
 
+    /*
+    the flowinfo field can be specified by the user to indicate a network flow. how it is used by the kernel, or
+    whether its enforced to be unique is not so obvious.
+    getting this value is only supported by the kernel for outgoing packets using the 'struct ipv6_pinfo'.
+    in any case, leaving it with value of 0 won't effect our
+    representation of network flows.
+    */
+    net_details->flowinfo = 0;
+    /*
+    the scope_id field can be specified by the user to indicate the network interface from which to send a packet. this
+    only applies for link-local addresses, and is used only by the local kernel.
+    getting this value is done by using the 'ipv6_iface_scope_id(const struct in6_addr *addr, int iface)' function.
+    in any case, leaving it with value of 0 won't effect our representation of network flows.
+    */
+    net_details->scope_id = 0;
+
     if ( peer ) {
 
         net_details->local_address = get_sock_v6_daddr(sk);
         net_details->local_port = get_inet_dport(inet);
         net_details->remote_address = addr;
         net_details->remote_port = get_inet_sport(inet);
+
     }
     else {
 
@@ -1778,6 +1843,66 @@ static __always_inline int get_network_details_from_sock_v6(struct sock *sk, net
 
     return 0;
 }
+
+static __always_inline int get_local_sockaddr_in_from_network_details(struct sockaddr_in *addr, net_conn_v4_t *net_details, u16 family)
+{
+    addr->sin_family = family;
+    addr->sin_port = net_details->local_port;
+    addr->sin_addr.s_addr = net_details->local_address;
+
+    return 0;
+}
+
+static __always_inline int get_remote_sockaddr_in_from_network_details(struct sockaddr_in *addr, net_conn_v4_t *net_details, u16 family)
+{
+    addr->sin_family = family;
+    addr->sin_port = net_details->remote_port;
+    addr->sin_addr.s_addr = net_details->remote_address;
+
+    return 0;
+}
+
+static __always_inline int get_local_sockaddr_in6_from_network_details(struct sockaddr_in6 *addr, net_conn_v6_t *net_details, u16 family)
+{
+    addr->sin6_family = family;
+    addr->sin6_port = net_details->local_port;
+    addr->sin6_flowinfo = net_details->flowinfo;
+    addr->sin6_addr = net_details->local_address;
+    addr->sin6_scope_id = net_details->scope_id;
+
+    return 0;
+}
+
+static __always_inline int get_remote_sockaddr_in6_from_network_details(struct sockaddr_in6 *addr, net_conn_v6_t *net_details, u16 family)
+{
+    addr->sin6_family = family;
+    addr->sin6_port = net_details->remote_port;
+    addr->sin6_flowinfo = net_details->flowinfo;
+    addr->sin6_addr = net_details->remote_address;
+    addr->sin6_scope_id = net_details->scope_id;
+
+    return 0;
+}
+
+static __always_inline int get_local_net_id_from_network_details_v4(struct sock *sk, local_net_id_t *connect_id, net_conn_v4_t *net_details, u16 family)
+{
+    connect_id->address.s6_addr32[3] = net_details->local_address;
+    connect_id->address.s6_addr16[5] = 0xffff;
+    connect_id->port = net_details->local_port;
+    connect_id->protocol = get_sock_protocol(sk);
+
+    return 0;
+}
+
+static __always_inline int get_local_net_id_from_network_details_v6(struct sock *sk, local_net_id_t *connect_id, net_conn_v6_t *net_details, u16 family)
+{
+    connect_id->address = net_details->local_address;
+    connect_id->port = net_details->local_port;
+    connect_id->protocol = get_sock_protocol(sk);
+
+    return 0;
+}
+
 
 /*============================== SYSCALL HOOKS ==============================*/
 
@@ -2693,28 +2818,21 @@ int BPF_KPROBE(trace_security_socket_listen)
     if ( family == AF_INET ){
 
         net_conn_v4_t net_details = {};
-
         get_network_details_from_sock_v4(sk, &net_details, 0);
 
         struct sockaddr_in local;
-        local.sin_family = family;
-        local.sin_port = net_details.local_port;
-        local.sin_addr.s_addr = net_details.local_address;
+        get_local_sockaddr_in_from_network_details(&local, &net_details, family);
 
         save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(1, *tags));
 
     }
     else if ( family == AF_INET6 ){
-        net_conn_v6_t net_details = {};
 
+        net_conn_v6_t net_details = {};
         get_network_details_from_sock_v6(sk, &net_details, 0);
 
         struct sockaddr_in6 local;
-        local.sin6_family = family;
-        local.sin6_port = net_details.local_port;
-        local.sin6_flowinfo = 0;
-        local.sin6_addr = net_details.local_address;
-        local.sin6_scope_id = 0;
+        get_local_sockaddr_in6_from_network_details(&local, &net_details, family);
 
         save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(1, *tags));
     }
@@ -2809,28 +2927,21 @@ int BPF_KPROBE(trace_security_socket_accept)
     if ( family == AF_INET ){
 
         net_conn_v4_t net_details = {};
-
         get_network_details_from_sock_v4(sk, &net_details, 0);
 
         struct sockaddr_in local;
-        local.sin_family = family;
-        local.sin_port = net_details.local_port;
-        local.sin_addr.s_addr = net_details.local_address;
+        get_local_sockaddr_in_from_network_details(&local, &net_details, family);
 
         save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(1, *tags));
 
     }
     else if ( family == AF_INET6 ){
-        net_conn_v6_t net_details = {};
 
+        net_conn_v6_t net_details = {};
         get_network_details_from_sock_v6(sk, &net_details, 0);
 
         struct sockaddr_in6 local;
-        local.sin6_family = family;
-        local.sin6_port = net_details.local_port;
-        local.sin6_flowinfo = 0;
-        local.sin6_addr = net_details.local_address;
-        local.sin6_scope_id = 0;
+        get_local_sockaddr_in6_from_network_details(&local, &net_details, family);
 
         save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(1, *tags));
     }
@@ -2853,6 +2964,9 @@ int BPF_KPROBE(trace_security_socket_bind)
         return 0;
 
     set_buf_off(SUBMIT_BUF_IDX, sizeof(context_t));
+
+    struct socket *sock = (struct socket *)PT_REGS_PARM1(ctx);
+    struct sock *sk = get_socket_sock(sock);
 
     struct sockaddr *address = (struct sockaddr *)PT_REGS_PARM2(ctx);
 
@@ -2878,15 +2992,482 @@ int BPF_KPROBE(trace_security_socket_bind)
         // saving to submit buffer
         save_to_submit_buf(submit_p, (void *)address, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(1, *tags));
 
+        struct sockaddr_in *addr = (struct sockaddr_in *)address;
+        // todo: only if udp - update map
+
+        if (READ_KERN(addr->sin_port)){
+
+            // update network map with this new connection
+            local_net_id_t connect_id = {0};
+            connect_id.address.s6_addr32[3] = READ_KERN(addr->sin_addr).s_addr;
+            connect_id.address.s6_addr16[5] = 0xffff;
+            connect_id.port = READ_KERN(addr->sin_port);
+            connect_id.protocol = get_sock_protocol(sk);
+
+            bpf_map_update_elem(&network_map, &connect_id, &context.host_tid, BPF_ANY);
+        }
     }
     else if (sa_fam == AF_INET6) {
         // saving to submit buffer
         save_to_submit_buf(submit_p, (void *)address, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(1, *tags));
+
+        struct sockaddr_in6 *addr = (struct sockaddr_in6 *)address;
+
+        if (READ_KERN(addr->sin6_port)){
+
+            // update network map with this new connection
+            local_net_id_t connect_id = {0};
+            connect_id.address = READ_KERN(addr->sin6_addr);
+            connect_id.port = READ_KERN(addr->sin6_port);
+            connect_id.protocol = get_sock_protocol(sk);
+
+            bpf_map_update_elem(&network_map, &connect_id, &context.host_tid, BPF_ANY);
+        }
     }
 
     events_perf_submit(ctx);
     return 0;
 };
+
+SEC("kprobe/udp_sendmsg")
+int BPF_KPROBE(trace_udp_sendmsg)
+{
+    if (!should_trace())
+        return 0;
+
+    buf_t *submit_p = get_buf(SUBMIT_BUF_IDX);
+    if (submit_p == NULL)
+        return 0;
+    set_buf_off(SUBMIT_BUF_IDX, sizeof(context_t));
+
+    struct sock *sk = (struct sock *)PT_REGS_PARM1(ctx);
+
+    u16 family = get_sock_family(sk);
+    if ( (family != AF_INET) && (family != AF_INET6) ) {
+        return 0;
+    }
+
+    context_t context = init_and_save_context(ctx, submit_p, UDP_SENDMSG, 1 /*argnum*/, 0 /*ret*/);
+
+    // getting event tags
+    u64 *tags = bpf_map_lookup_elem(&params_names_map, &context.eventid);
+    if (!tags) {
+        return -1;
+    }
+
+    if ( family == AF_INET ){
+
+        net_conn_v4_t net_details = {};
+        get_network_details_from_sock_v4(sk, &net_details, 0);
+
+        struct sockaddr_in local;
+        get_local_sockaddr_in_from_network_details(&local, &net_details, family);
+
+        save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(0, *tags));
+
+        if (net_details.local_port){
+            // update network map with this new connection
+            local_net_id_t connect_id = {0};
+            get_local_net_id_from_network_details_v4(sk, &connect_id, &net_details, family);
+
+            u32 *tid = bpf_map_lookup_elem(&network_map, &connect_id);
+            if (tid == NULL) {
+                bpf_map_update_elem(&network_map, &connect_id, &context.host_tid, BPF_ANY);
+            }
+        }
+
+    }
+    else if ( family == AF_INET6 ){
+
+        net_conn_v6_t net_details = {};
+        get_network_details_from_sock_v6(sk, &net_details, 0);
+
+        struct sockaddr_in6 local;
+        get_local_sockaddr_in6_from_network_details(&local, &net_details, family);
+
+        save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(0, *tags));
+
+        if (net_details.local_port){
+            // update network map with this new connection
+            local_net_id_t connect_id = {0};
+            get_local_net_id_from_network_details_v6(sk, &connect_id, &net_details, family);
+
+            u32 *tid = bpf_map_lookup_elem(&network_map, &connect_id);
+            if (tid == NULL) {
+                bpf_map_update_elem(&network_map, &connect_id, &context.host_tid, BPF_ANY);
+            }
+        }
+    }
+
+    events_perf_submit(ctx);
+    return 0;
+};
+
+SEC("kprobe/__udp_disconnect")
+int BPF_KPROBE(trace_udp_disconnect)
+{
+    if (!should_trace())
+        return 0;
+
+    buf_t *submit_p = get_buf(SUBMIT_BUF_IDX);
+    if (submit_p == NULL)
+        return 0;
+    set_buf_off(SUBMIT_BUF_IDX, sizeof(context_t));
+
+    struct sock *sk = (struct sock *)PT_REGS_PARM1(ctx);
+
+    u16 family = get_sock_family(sk);
+    if ( (family != AF_INET) && (family != AF_INET6) ) {
+        return 0;
+    }
+
+    context_t context = init_and_save_context(ctx, submit_p, UDP_DISCONNECT, 1 /*argnum*/, 0 /*ret*/);
+
+    // getting event tags
+    u64 *tags = bpf_map_lookup_elem(&params_names_map, &context.eventid);
+    if (!tags) {
+        return -1;
+    }
+
+    if ( family == AF_INET ){
+
+        net_conn_v4_t net_details = {};
+        get_network_details_from_sock_v4(sk, &net_details, 0);
+
+        struct sockaddr_in local;
+        get_local_sockaddr_in_from_network_details(&local, &net_details, family);
+
+        save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(0, *tags));
+
+        if (net_details.local_port){
+            // update network map with this new connection
+            local_net_id_t connect_id = {0};
+            get_local_net_id_from_network_details_v4(sk, &connect_id, &net_details, family);
+
+            bpf_map_delete_elem(&network_map, &connect_id);
+        }
+
+    }
+    else if ( family == AF_INET6 ){
+
+        net_conn_v6_t net_details = {};
+        get_network_details_from_sock_v6(sk, &net_details, 0);
+
+        struct sockaddr_in6 local;
+        get_local_sockaddr_in6_from_network_details(&local, &net_details, family);
+
+        save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(0, *tags));
+
+        if (net_details.local_port){
+            // update network map with this new connection
+            local_net_id_t connect_id = {0};
+            get_local_net_id_from_network_details_v6(sk, &connect_id, &net_details, family);
+
+            bpf_map_delete_elem(&network_map, &connect_id);
+        }
+    }
+
+    events_perf_submit(ctx);
+    return 0;
+};
+
+SEC("kprobe/udp_destroy_sock")
+int BPF_KPROBE(trace_udp_destroy_sock)
+{
+    if (!should_trace())
+        return 0;
+
+    buf_t *submit_p = get_buf(SUBMIT_BUF_IDX);
+    if (submit_p == NULL)
+        return 0;
+    set_buf_off(SUBMIT_BUF_IDX, sizeof(context_t));
+
+    struct sock *sk = (struct sock *)PT_REGS_PARM1(ctx);
+
+    u16 family = get_sock_family(sk);
+    if ( (family != AF_INET) && (family != AF_INET6) ) {
+        return 0;
+    }
+
+    context_t context = init_and_save_context(ctx, submit_p, UDP_DESTROY_SOCK, 1 /*argnum*/, 0 /*ret*/);
+
+    // getting event tags
+    u64 *tags = bpf_map_lookup_elem(&params_names_map, &context.eventid);
+    if (!tags) {
+        return -1;
+    }
+
+    if ( family == AF_INET ){
+
+        net_conn_v4_t net_details = {};
+        get_network_details_from_sock_v4(sk, &net_details, 0);
+
+        struct sockaddr_in local;
+        get_local_sockaddr_in_from_network_details(&local, &net_details, family);
+
+        save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(0, *tags));
+
+        if (net_details.local_port){
+            // update network map with this new connection
+            local_net_id_t connect_id = {0};
+            get_local_net_id_from_network_details_v4(sk, &connect_id, &net_details, family);
+
+            bpf_map_delete_elem(&network_map, &connect_id);
+        }
+
+    }
+    else if ( family == AF_INET6 ){
+
+        net_conn_v6_t net_details = {};
+        get_network_details_from_sock_v6(sk, &net_details, 0);
+
+        struct sockaddr_in6 local;
+        get_local_sockaddr_in6_from_network_details(&local, &net_details, family);
+
+        save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(0, *tags));
+
+        if (net_details.local_port){
+            // update network map with this new connection
+            local_net_id_t connect_id = {0};
+            get_local_net_id_from_network_details_v6(sk, &connect_id, &net_details, family);
+
+            bpf_map_delete_elem(&network_map, &connect_id);
+        }
+    }
+
+    events_perf_submit(ctx);
+    return 0;
+};
+
+SEC("kprobe/udpv6_destroy_sock")
+int BPF_KPROBE(trace_udpv6_destroy_sock)
+{
+    if (!should_trace())
+        return 0;
+
+    buf_t *submit_p = get_buf(SUBMIT_BUF_IDX);
+    if (submit_p == NULL)
+        return 0;
+    set_buf_off(SUBMIT_BUF_IDX, sizeof(context_t));
+
+    struct sock *sk = (struct sock *)PT_REGS_PARM1(ctx);
+
+    u16 family = get_sock_family(sk);
+    if ( (family != AF_INET) && (family != AF_INET6) ) {
+        return 0;
+    }
+
+    context_t context = init_and_save_context(ctx, submit_p, UDPV6_DESTROY_SOCK, 1 /*argnum*/, 0 /*ret*/);
+
+    // getting event tags
+    u64 *tags = bpf_map_lookup_elem(&params_names_map, &context.eventid);
+    if (!tags) {
+        return -1;
+    }
+
+    if ( family == AF_INET ){
+
+        net_conn_v4_t net_details = {};
+        get_network_details_from_sock_v4(sk, &net_details, 0);
+
+        struct sockaddr_in local;
+        get_local_sockaddr_in_from_network_details(&local, &net_details, family);
+
+        save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(0, *tags));
+
+        if (net_details.local_port){
+            // update network map with this new connection
+            local_net_id_t connect_id = {0};
+            get_local_net_id_from_network_details_v4(sk, &connect_id, &net_details, family);
+
+            bpf_map_delete_elem(&network_map, &connect_id);
+        }
+
+    }
+    else if ( family == AF_INET6 ){
+
+        net_conn_v6_t net_details = {};
+        get_network_details_from_sock_v6(sk, &net_details, 0);
+
+        struct sockaddr_in6 local;
+        get_local_sockaddr_in6_from_network_details(&local, &net_details, family);
+
+        save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(0, *tags));
+
+        if (net_details.local_port){
+            // update network map with this new connection
+            local_net_id_t connect_id = {0};
+            get_local_net_id_from_network_details_v6(sk, &connect_id, &net_details, family);
+
+            bpf_map_delete_elem(&network_map, &connect_id);
+        }
+    }
+
+    events_perf_submit(ctx);
+    return 0;
+};
+
+SEC("raw_tracepoint/inet_sock_set_state")
+int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
+{
+    // according to: https://elixir.bootlin.com/linux/latest/source/include/trace/events/sock.h#L138
+    struct sock *sk = (struct sock *)ctx->args[0];
+    int old_state = ctx->args[1];
+    int new_state = ctx->args[2];
+
+    u64 pointer_address = (u64)sk;
+
+    // sometime socket state may be changed by other processes that handle the tcp network stack.
+    // so we save the socket pointer in sock_ptr_map, and if this socket changes state than we don't care which process
+    // initiated it.
+    if (new_state == TCP_LISTEN || new_state == TCP_ESTABLISHED || new_state == TCP_CLOSE) {
+        local_net_id_t *value_holder = bpf_map_lookup_elem(&sock_ptr_map, &pointer_address);
+        if (!value_holder) {
+            if (!should_trace()) {
+                return 0;
+            }
+        }
+    }
+    else {
+        if (!should_trace()) {
+            return 0;
+        }
+    }
+
+    u16 family = get_sock_family(sk);
+    if ( (family != AF_INET) && (family != AF_INET6) ) {
+        return 0;
+    }
+
+    buf_t *submit_p = get_buf(SUBMIT_BUF_IDX);
+    if (submit_p == NULL)
+        return 0;
+    set_buf_off(SUBMIT_BUF_IDX, sizeof(context_t));
+
+    context_t context = init_and_save_context(ctx, submit_p, INET_SOCK_SET_STATE, 7 /*argnum*/, 0 /*ret*/);
+
+    // getting event tags
+    u64 *tags = bpf_map_lookup_elem(&params_names_map, &context.eventid);
+    if (!tags) {
+        return -1;
+    }
+
+    save_to_submit_buf(submit_p, (void *)&old_state, sizeof(int), INT_T, DEC_ARG(0, *tags));
+    save_to_submit_buf(submit_p, (void *)&new_state, sizeof(int), INT_T, DEC_ARG(1, *tags));
+
+    local_net_id_t connect_id = {0};
+    local_net_id_t *connect_id_ptr;
+
+    if ( family == AF_INET ){
+
+        net_conn_v4_t net_details = {};
+        get_network_details_from_sock_v4(sk, &net_details, 0);
+
+        struct sockaddr_in local;
+        get_local_sockaddr_in_from_network_details(&local, &net_details, family);
+
+        save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(2, *tags));
+
+        struct sockaddr_in remote;
+        get_remote_sockaddr_in_from_network_details(&remote, &net_details, family);
+
+        save_to_submit_buf(submit_p, (void *)&remote, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(3, *tags));
+
+        if (net_details.local_port){
+            // update network map with this new connection
+
+            get_local_net_id_from_network_details_v4(sk, &connect_id, &net_details, family);
+
+            connect_id_ptr = &connect_id;
+
+            // this is where we save the socket address in sock_ptr_map after we have the connect_id filled
+            bpf_map_update_elem(&sock_ptr_map, &pointer_address, connect_id_ptr, BPF_ANY);
+        }
+        else {
+            connect_id_ptr = bpf_map_lookup_elem(&sock_ptr_map, &pointer_address);
+            if (connect_id_ptr == 0) {
+                connect_id_ptr = &connect_id;
+            }
+        }
+
+        // this is where we save the socket address in sock_ptr_map for the first time
+        if (new_state == TCP_LISTEN || new_state == TCP_SYN_SENT || new_state == TCP_SYN_RECV) {
+            bpf_map_update_elem(&sock_ptr_map, &pointer_address, connect_id_ptr, BPF_ANY);
+        }
+
+        if ( READ_KERN(connect_id_ptr->port) ) {
+
+            if (new_state == TCP_LISTEN) {
+                bpf_map_update_elem(&network_map, connect_id_ptr, &context.host_tid, BPF_ANY);
+            }
+            else if (new_state == TCP_ESTABLISHED) {
+                bpf_map_update_elem(&network_map, connect_id_ptr, &context.host_tid, BPF_ANY);
+            }
+            else if (new_state == TCP_CLOSE) {
+                bpf_map_delete_elem(&sock_ptr_map, &pointer_address);
+                bpf_map_delete_elem(&network_map, connect_id_ptr);
+            }
+        }
+    }
+    else if ( family == AF_INET6 ){
+
+        net_conn_v6_t net_details = {};
+        get_network_details_from_sock_v6(sk, &net_details, 0);
+
+        struct sockaddr_in6 local;
+        get_local_sockaddr_in6_from_network_details(&local, &net_details, family);
+
+        save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(2, *tags));
+
+        struct sockaddr_in6 remote;
+        get_remote_sockaddr_in6_from_network_details(&remote, &net_details, family);
+
+        save_to_submit_buf(submit_p, (void *)&remote, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(3, *tags));
+
+        if (net_details.local_port){
+            // update network map with this new connection
+            get_local_net_id_from_network_details_v6(sk, &connect_id, &net_details, family);
+
+            connect_id_ptr = &connect_id;
+
+            // this is where we save the socket address in sock_ptr_map after we have the connect_id filled
+            bpf_map_update_elem(&sock_ptr_map, &pointer_address, connect_id_ptr, BPF_ANY);
+        }
+        else {
+            connect_id_ptr = bpf_map_lookup_elem(&sock_ptr_map, &pointer_address);
+            if (connect_id_ptr == 0) {
+                connect_id_ptr = &connect_id;
+            }
+        }
+
+        // this is where we save the socket address in sock_ptr_map for the first time
+        if (new_state == TCP_LISTEN || new_state == TCP_SYN_SENT || new_state == TCP_SYN_RECV) {
+            bpf_map_update_elem(&sock_ptr_map, &pointer_address, connect_id_ptr, BPF_ANY);
+        }
+
+        if ( READ_KERN(connect_id_ptr->port) ) {
+
+            if (new_state == TCP_LISTEN) {
+                bpf_map_update_elem(&network_map, connect_id_ptr, &context.host_tid, BPF_ANY);
+            }
+            else if (new_state == TCP_ESTABLISHED) {
+                bpf_map_update_elem(&network_map, connect_id_ptr, &context.host_tid, BPF_ANY);
+            }
+            else if (new_state == TCP_CLOSE) {
+                bpf_map_delete_elem(&sock_ptr_map, &pointer_address);
+                bpf_map_delete_elem(&network_map, connect_id_ptr);
+            }
+        }
+    }
+
+    save_to_submit_buf(submit_p, (void *)&old_state, sizeof(int), INT_T, DEC_ARG(4, *tags));
+    save_to_submit_buf(submit_p, (void *)&new_state, sizeof(int), INT_T, DEC_ARG(5, *tags));
+    save_to_submit_buf(submit_p, (void *)&pointer_address, sizeof(int), INT_T, DEC_ARG(6, *tags));
+
+    events_perf_submit(ctx);
+
+    return 0;
+}
 
 SEC("kprobe/send_bin")
 int BPF_KPROBE(send_bin)
@@ -3445,6 +4026,160 @@ int BPF_KPROBE(trace_security_bpf_map)
 
     events_perf_submit(ctx);
     return 0;
+}
+
+static __always_inline bool skb_revalidate_data(struct __sk_buff *skb, uint8_t **head, uint8_t **tail, const u32 offset) {
+    if (*head + offset > *tail) {
+        if (bpf_skb_pull_data(skb, offset) < 0) {
+            return false;
+        }
+
+        *head = (uint8_t *)(long)skb->data;
+        *tail = (uint8_t *)(long)skb->data_end;
+
+        if (*head + offset > *tail) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static __always_inline int tc_probe(struct __sk_buff *skb, bool ingress) {
+    // Note: if we are attaching to docker0 bridge, the ingress bool argument is actually egress
+    uint8_t *head = (uint8_t *)(long)skb->data;
+    uint8_t *tail = (uint8_t *)(long)skb->data_end;
+
+    if (head + sizeof(struct ethhdr) > tail) {
+        return TC_ACT_OK;
+    }
+
+    struct ethhdr *eth = (void *)head;
+    struct packet_t pkt = {0};
+    local_net_id_t connect_id = {0};
+
+    uint32_t l4_hdr_off;
+
+    switch (bpf_ntohs(eth->h_proto)) {
+    case ETH_P_IP:
+        l4_hdr_off = sizeof(struct ethhdr) + sizeof(struct iphdr);
+
+        if (!skb_revalidate_data(skb, &head, &tail, l4_hdr_off)) {
+            return TC_ACT_OK;
+        }
+
+        struct iphdr *ip = (void *)head + sizeof(struct ethhdr);
+
+        // Create a IPv4-Mapped IPv6 Address
+        pkt.src_addr.s6_addr32[3] = ip->saddr;
+        pkt.dst_addr.s6_addr32[3] = ip->daddr;
+
+        pkt.src_addr.s6_addr16[5] = 0xffff;
+        pkt.dst_addr.s6_addr16[5] = 0xffff;
+
+        pkt.protocol = ip->protocol;
+        pkt.ts = bpf_ktime_get_ns();
+
+        break;
+    case ETH_P_IPV6:
+        l4_hdr_off = sizeof(struct ethhdr) + sizeof(struct ipv6hdr);
+
+        if (!skb_revalidate_data(skb, &head, &tail, l4_hdr_off)) {
+            return TC_ACT_OK;
+        }
+
+        struct ipv6hdr *ip6 = (void *)head + sizeof(struct ethhdr);
+
+        pkt.src_addr = ip6->saddr;
+        pkt.dst_addr = ip6->daddr;
+
+        pkt.protocol = ip6->nexthdr;
+        pkt.ts = bpf_ktime_get_ns();
+
+        break;
+    default:
+        return TC_ACT_OK;
+    }
+
+    if (pkt.protocol == IPPROTO_TCP) {
+        if (!skb_revalidate_data(skb, &head, &tail, l4_hdr_off + sizeof(struct tcphdr))) {
+            return TC_ACT_OK;
+        }
+
+        struct tcphdr *tcp = (void *)head + l4_hdr_off;
+
+        pkt.src_port = tcp->source;
+        pkt.dst_port = tcp->dest;
+    } else if (pkt.protocol == IPPROTO_UDP) {
+        if (!skb_revalidate_data(skb, &head, &tail, l4_hdr_off + sizeof(struct udphdr))) {
+            return TC_ACT_OK;
+        }
+
+        struct udphdr *udp = (void *)head + l4_hdr_off;
+
+        pkt.src_port = udp->source;
+        pkt.dst_port = udp->dest;
+    } else {
+        //todo: support other transport protocols?
+        return TC_ACT_OK;
+    }
+
+    // todo: verify that we capture ipv6 flows correctly
+    connect_id.protocol = pkt.protocol;
+    connect_id.address = pkt.src_addr;
+    connect_id.port = pkt.src_port;
+    u32 *tid = bpf_map_lookup_elem(&network_map, &connect_id);
+    if (tid == NULL) {
+        connect_id.address.s6_addr32[0] = 0;
+        connect_id.address.s6_addr32[1] = 0;
+        connect_id.address.s6_addr32[2] = 0;
+        connect_id.address.s6_addr32[3] = 0;
+        // todo: handle ipv6 (which is just 0)
+        // todo: handle network namespaces conflicts
+        connect_id.address.s6_addr16[5] = 0xffff;
+        tid = bpf_map_lookup_elem(&network_map, &connect_id);
+        if (tid == NULL) {
+            connect_id.address = pkt.dst_addr;
+            connect_id.port = pkt.dst_port;
+            tid = bpf_map_lookup_elem(&network_map, &connect_id);
+            if (tid == NULL) {
+                connect_id.address.s6_addr32[0] = 0;
+                connect_id.address.s6_addr32[1] = 0;
+                connect_id.address.s6_addr32[2] = 0;
+                connect_id.address.s6_addr32[3] = 0;
+                // todo: handle ipv6 (which is just 0)
+                connect_id.address.s6_addr16[5] = 0xffff;
+                tid = bpf_map_lookup_elem(&network_map, &connect_id);
+                if (tid == NULL) {
+                    return TC_ACT_OK;
+                }
+            }
+        }
+    }
+
+    /* The tc perf_event_output handler will use the upper 32 bits
+     * of the flags argument as a number of bytes to include of the
+     * packet payload in the event data. If the size is too big, the
+     * call to bpf_perf_event_output will fail and return -EFAULT.
+     *
+     * See bpf_skb_event_output in net/core/filter.c.
+     *
+     */
+    u64 flags = BPF_F_CURRENT_CPU;
+    flags |= (u64)skb->len << 32;
+    bpf_perf_event_output(skb, &net_events, flags, &pkt, sizeof(pkt));
+
+    return TC_ACT_OK;
+}
+
+SEC("classifier")
+int tc_egress(struct __sk_buff *skb) {
+    return tc_probe(skb, false);
+}
+
+SEC("classifier")
+int tc_ingress(struct __sk_buff *skb) {
+    return tc_probe(skb, true);
 }
 
 char LICENSE[] SEC("license") = "GPL";

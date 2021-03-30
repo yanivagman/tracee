@@ -166,6 +166,11 @@ const (
 	SecuritySbMountEventID
 	SecurityBPFEventID
 	SecurityBPFMapEventID
+	UdpSendmsgEventID
+	UdpDisconnectEventID
+	UdpV4DestroySockEventID
+	UdpV6DestroySockEventID
+	InetSockSetStateEventID
 	MaxEventID
 )
 
@@ -549,6 +554,11 @@ var EventsIDToEvent = map[int32]EventConfig{
 	SecuritySbMountEventID:       {ID: SecuritySbMountEventID, ID32Bit: sys32undefined, Name: "security_sb_mount", Probes: []probe{{event: "security_sb_mount", attach: kprobe, fn: "trace_security_sb_mount"}}, Sets: []string{"default", "lsm_hooks"}},
 	SecurityBPFEventID:           {ID: SecurityBPFEventID, ID32Bit: sys32undefined, Name: "security_bpf", Probes: []probe{{event: "security_bpf", attach: kprobe, fn: "trace_security_bpf"}}, Sets: []string{"lsm_hooks"}},
 	SecurityBPFMapEventID:        {ID: SecurityBPFMapEventID, ID32Bit: sys32undefined, Name: "security_bpf_map", Probes: []probe{{event: "security_bpf_map", attach: kprobe, fn: "trace_security_bpf_map"}}, Sets: []string{"lsm_hooks"}},
+	UdpSendmsgEventID:            {ID: UdpSendmsgEventID, ID32Bit: sys32undefined, Name: "udp_sendmsg", Probes: []probe{{event: "udp_sendmsg", attach: kprobe, fn: "trace_udp_sendmsg"}}, Sets: []string{"udp"}},
+	UdpDisconnectEventID:         {ID: UdpDisconnectEventID, ID32Bit: sys32undefined, Name: "udp_disconnect", Probes: []probe{{event: "__udp_disconnect", attach: kprobe, fn: "trace_udp_disconnect"}}, Sets: []string{"udp"}},
+	UdpV4DestroySockEventID:      {ID: UdpV4DestroySockEventID, ID32Bit: sys32undefined, Name: "udp_destroy_sock", Probes: []probe{{event: "udp_destroy_sock", attach: kprobe, fn: "trace_udp_destroy_sock"}}, Sets: []string{"udp"}},
+	UdpV6DestroySockEventID:      {ID: UdpV6DestroySockEventID, ID32Bit: sys32undefined, Name: "udpv6_destroy_sock", Probes: []probe{{event: "udpv6_destroy_sock", attach: kprobe, fn: "trace_udpv6_destroy_sock"}}, Sets: []string{"udp"}},
+	InetSockSetStateEventID:      {ID: InetSockSetStateEventID, ID32Bit: sys32undefined, Name: "inet_sock_set_state", Probes: []probe{{event: "sock:inet_sock_set_state", attach: rawTracepoint, fn: "tracepoint__inet_sock_set_state"}}, EssentialEvent: true, Sets: []string{"tcp"}},
 }
 
 // EventsIDToParams is list of the parameters (name and type) used by the events
@@ -919,4 +929,9 @@ var EventsIDToParams = map[int32][]external.ArgMeta{
 	SecuritySbMountEventID:       {{Type: "const char*", Name: "dev_name"}, {Type: "const char*", Name: "path"}, {Type: "const char*", Name: "type"}, {Type: "unsigned long", Name: "flags"}},
 	SecurityBPFEventID:           {{Type: "int", Name: "cmd"}},
 	SecurityBPFMapEventID:        {{Type: "unsigned int", Name: "map_id"}, {Type: "const char*", Name: "map_name"}},
+	UdpSendmsgEventID:            {{Type: "struct sockaddr*", Name: "local_addr"}},
+	UdpDisconnectEventID:         {{Type: "struct sockaddr*", Name: "local_addr"}},
+	UdpV4DestroySockEventID:      {{Type: "struct sockaddr*", Name: "local_addr"}},
+	UdpV6DestroySockEventID:      {{Type: "struct sockaddr*", Name: "local_addr"}},
+	InetSockSetStateEventID:      {{Type: "int", Name: "old_state"}, {Type: "int", Name: "new_state"}, {Type: "struct sockaddr*", Name: "local_addr"}, {Type: "struct sockaddr*", Name: "remote_addr"}, {Type: "int", Name: "old"}, {Type: "int", Name: "new"}, {Type: "int", Name: "pointer_address"}},
 }
