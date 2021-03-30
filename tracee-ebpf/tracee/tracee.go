@@ -286,6 +286,10 @@ func New(cfg Config) (*Tracee, error) {
 		setEssential(VfsWritevEventID)
 	}
 
+	if t.eventsToTrace[RetConnectEventID] {
+		setEssential(ConnectEventID)
+	}
+
 	// Compile final list of events to trace including essential events
 	for id, event := range EventsIDToEvent {
 		// If an essential event was not requested by the user, set its map value to false
@@ -736,7 +740,7 @@ func (t *Tracee) populateBPFMaps() error {
 	}
 
 	sysEnterTailsBPFMap, _ := t.bpfModule.GetMap("sys_enter_tails")
-	//sysExitTailsBPFMap := t.bpfModule.GetMap("sys_exit_tails")
+	sysExitTailsBPFMap, _ := t.bpfModule.GetMap("sys_exit_tails")
 	paramsTypesBPFMap, _ := t.bpfModule.GetMap("params_types_map")
 	paramsNamesBPFMap, _ := t.bpfModule.GetMap("params_names_map")
 	for e := range t.eventsToTrace {
@@ -764,6 +768,19 @@ func (t *Tracee) populateBPFMaps() error {
 				return fmt.Errorf("error loading BPF program %s: %v", probFnName, err)
 			}
 			sysEnterTailsBPFMap.Update(e, int32(prog.GetFd()))
+		} else if e == ConnectEventID {
+			event, ok := EventsIDToEvent[e]
+			if !ok {
+				continue
+			}
+
+			probFnName := fmt.Sprintf("syscall__%s", event.Name)
+
+			prog, err := t.bpfModule.GetProgram(probFnName)
+			if err != nil {
+				return fmt.Errorf("error loading BPF program %s: %v", probFnName, err)
+			}
+			sysExitTailsBPFMap.Update(e, int32(prog.GetFd()))
 		}
 	}
 
@@ -1193,6 +1210,25 @@ func (t *Tracee) prepareArgsForPrint(ctx *context, args map[argTag]interface{}) 
 			s = strings.TrimSuffix(s, ",")
 			s = fmt.Sprintf("{%s}", s)
 			args[t.EncParamName[ctx.EventID%2]["remote_addr"]] = s
+		}
+	case RetConnectEventID:
+		if sockAddr, isStrMap := args[t.EncParamName[ctx.EventID%2]["remote_addr"]].(map[string]string); isStrMap {
+			var s string
+			for key, val := range sockAddr {
+				s += fmt.Sprintf("'%s': '%s',", key, val)
+			}
+			s = strings.TrimSuffix(s, ",")
+			s = fmt.Sprintf("{%s}", s)
+			args[t.EncParamName[ctx.EventID%2]["remote_addr"]] = s
+		}
+		if sockAddr, isStrMap := args[t.EncParamName[ctx.EventID%2]["local_addr"]].(map[string]string); isStrMap {
+			var s string
+			for key, val := range sockAddr {
+				s += fmt.Sprintf("'%s': '%s',", key, val)
+			}
+			s = strings.TrimSuffix(s, ",")
+			s = fmt.Sprintf("{%s}", s)
+			args[t.EncParamName[ctx.EventID%2]["local_addr"]] = s
 		}
 	case AccessEventID, FaccessatEventID:
 		if mode, isInt32 := args[t.EncParamName[ctx.EventID%2]["mode"]].(int32); isInt32 {
