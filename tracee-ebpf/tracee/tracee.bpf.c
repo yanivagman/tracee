@@ -35,6 +35,7 @@
 #include <linux/version.h>
 #define KBUILD_MODNAME "tracee"
 #include <net/sock.h>
+#include <net/inet_sock.h>
 #include <bpf_endian.h>
 
 #include <uapi/linux/bpf.h>
@@ -290,6 +291,13 @@ typedef struct alert {
     u32 msg;    // Encoded message
     u8 payload; // Non zero if payload is sent to userspace
 } alert_t;
+
+typedef struct network_connection_v4 {
+    u32 local_address;
+    u16 local_port;
+    u32 remote_address;
+    u16 remote_port;
+} net_conn_v4_t;
 
 /*================================ KERNEL STRUCTS =============================*/
 
@@ -1432,6 +1440,48 @@ int trace_ret_##name(void *ctx)                                         \
     return trace_ret_generic(ctx, id, types, tags, &args, ret);         \
 }
 
+static __always_inline int get_network_details_from_sock_v4(struct sock *sk, net_conn_v4_t *net_details, int peer)
+{
+    struct inet_sock *inet = inet_sk(sk);
+
+    u32 addr = 0;
+    bpf_probe_read(&addr, sizeof(addr), &inet->inet_rcv_saddr);
+    if ( !addr ) {
+        bpf_probe_read(&addr, sizeof(addr), &inet->inet_saddr);
+    }
+
+    if ( peer ) {
+        net_details->local_address = addr;
+        bpf_probe_read(&net_details->local_port, sizeof(net_details->local_port), &inet->inet_sport);
+        bpf_probe_read(&net_details->remote_address, sizeof(net_details->remote_address), &inet->inet_daddr);
+        bpf_probe_read(&net_details->remote_port, sizeof(net_details->remote_port), &inet->inet_dport);
+
+        net_details->local_address = __bpf_ntohl(net_details->local_address);
+        net_details->local_port = __bpf_ntohs(net_details->local_port);
+    }
+    else {
+        bpf_probe_read(&net_details->local_address, sizeof(net_details->local_address), &inet->inet_daddr);
+        bpf_probe_read(&net_details->local_port, sizeof(net_details->local_port), &inet->inet_dport);
+        net_details->remote_address = addr;
+        bpf_probe_read(&net_details->remote_port, sizeof(net_details->remote_port), &inet->inet_sport);
+
+        net_details->local_address = __bpf_ntohl(net_details->local_address);
+        net_details->local_port = __bpf_ntohs(net_details->local_port);
+    }
+
+    return 0;
+}
+
+static __always_inline int get_network_details_from_socket_v4(struct socket *sock, net_conn_v4_t *net_details, int peer)
+{
+    struct sock *sk;
+
+    // getting struct sock from socket
+    bpf_probe_read(&sk, sizeof(sk), &sock->sk);
+
+    return get_network_details_from_sock_v4(sk, net_details, peer);
+}
+
 /*============================== SYSCALL HOOKS ==============================*/
 
 // include/trace/events/syscalls.h:
@@ -1596,24 +1646,24 @@ int tracepoint__raw_syscalls__sys_exit(struct bpf_raw_tracepoint_args *ctx)
             // getting source details
 
             u16 family;
-            u16 sport = 0;
-            u32 saddr = 0;
 
             // getting socket family
             bpf_probe_read(&family, sizeof(family), &sk->sk_family);
-            if ( (family == AF_INET) || (family == AF_INET6) ) {
+            if ( family == AF_INET ) {
 
-                // getting source IP
-                bpf_probe_read(&saddr, sizeof(saddr), &sk->sk_rcv_saddr);
-                saddr = __bpf_ntohl(saddr);
+                net_conn_v4_t net_details = {};
 
-                // getting source port
-                bpf_probe_read(&sport, sizeof(sport), &sk->sk_num);
-                sport = __bpf_ntohs(sport);
+                get_network_details_from_sock_v4(sk, &net_details, 1);
 
-                save_to_submit_buf(submit_p, (void *)&saddr, sizeof(u32), UINT_T, DEC_ARG(0, *tags));
-                save_to_submit_buf(submit_p, (void *)&sport, sizeof(u16), UINT_T, DEC_ARG(1, *tags));
+                save_to_submit_buf(submit_p, (void *)&net_details.local_address, sizeof(u32), UINT_T, DEC_ARG(0, *tags));
+                save_to_submit_buf(submit_p, (void *)&net_details.local_port, sizeof(u16), INT_T, DEC_ARG(1, *tags));
+//                save_to_submit_buf(submit_p, (void *)&net_details.remote_address, sizeof(u32), UINT_T, DEC_ARG(2, *tags));
+//                save_to_submit_buf(submit_p, (void *)&net_details.remote_port, sizeof(u16), INT_T, DEC_ARG(3, *tags));
             }
+            // we don't yet support IPv6
+//            else if ( family == AF_INET6 ) {
+//
+//            }
 
             events_perf_submit(ctx);
         }
@@ -1622,18 +1672,21 @@ int tracepoint__raw_syscalls__sys_exit(struct bpf_raw_tracepoint_args *ctx)
     else if (id == ACCEPT_SYSCALL || id == ACCEPT4_SYSCALL) {
         u64 sock_address = 0;
         struct sock *sk;
+        struct socket *sock;
 
         load_retval(&sock_address, SECURITY_SOCKET_ACCEPT);
         if (sock_address != 0) {
 
-            sk = (struct sock*)sock_address;
+            sock = (struct socket*)sock_address;
+            // getting struct sock from socket
+            bpf_probe_read(&sk, sizeof(sk), &sock->sk);
 
             buf_t *submit_p = get_buf(SUBMIT_BUF_IDX);
             if (submit_p == NULL)
                 return 0;
             set_buf_off(SUBMIT_BUF_IDX, sizeof(context_t));
 
-            context_t context = init_and_save_context(ctx, submit_p, RET_ACCEPT, 2 /*argnum*/, 0);
+            context_t context = init_and_save_context(ctx, submit_p, RET_ACCEPT, 4 /*argnum*/, 0);
 
             u64 *tags = bpf_map_lookup_elem(&params_names_map, &context.eventid);
             if (!tags) {
@@ -1643,24 +1696,25 @@ int tracepoint__raw_syscalls__sys_exit(struct bpf_raw_tracepoint_args *ctx)
             // getting source details
 
             u16 family;
-            u16 sport = 0;
-            u32 saddr = 0;
 
             // getting socket family
             bpf_probe_read(&family, sizeof(family), &sk->sk_family);
-            if ( (family == AF_INET) || (family == AF_INET6) ) {
+            if ( family == AF_INET ) {
 
-                // getting source IP
-                bpf_probe_read(&saddr, sizeof(saddr), &sk->sk_rcv_saddr);
-                saddr = __bpf_ntohl(saddr);
+                net_conn_v4_t net_details = {};
 
-                // getting source port
-                bpf_probe_read(&sport, sizeof(sport), &sk->sk_num);
-                sport = __bpf_ntohs(sport);
+                get_network_details_from_sock_v4(sk, &net_details, 0);
 
-                save_to_submit_buf(submit_p, (void *)&saddr, sizeof(u32), UINT_T, DEC_ARG(0, *tags));
-                save_to_submit_buf(submit_p, (void *)&sport, sizeof(u16), UINT_T, DEC_ARG(1, *tags));
+                save_to_submit_buf(submit_p, (void *)&net_details.local_address, sizeof(u32), UINT_T, DEC_ARG(0, *tags));
+                save_to_submit_buf(submit_p, (void *)&net_details.local_port, sizeof(u16), UINT_T, DEC_ARG(1, *tags));
+                save_to_submit_buf(submit_p, (void *)&net_details.remote_address, sizeof(u32), UINT_T, DEC_ARG(2, *tags));
+                save_to_submit_buf(submit_p, (void *)&net_details.remote_port, sizeof(u16), UINT_T, DEC_ARG(3, *tags));
+
             }
+            // we don't yet support IPv6
+//            else if ( family == AF_INET6 ) {
+//
+//            }
 
             events_perf_submit(ctx);
         }
@@ -2186,7 +2240,7 @@ int BPF_KPROBE(trace_security_socket_connect)
     set_buf_off(SUBMIT_BUF_IDX, sizeof(context_t));
 
     int argnum = 0;
-    context_t context = init_and_save_context(ctx, submit_p, SECURITY_SOCKET_CONNECT, 2 /*argnum*/, 0 /*ret*/);
+    context_t context = init_and_save_context(ctx, submit_p, SECURITY_SOCKET_CONNECT, 4 /*argnum*/, 0 /*ret*/);
 
     // getting event tags
     u64 *tags = bpf_map_lookup_elem(&params_names_map, &context.eventid);
@@ -2245,14 +2299,16 @@ int BPF_KPROBE(trace_security_socket_connect)
         dport = __bpf_ntohs(dport);
 
         // saving to submit buffer
-        if (daddr != 0) {
-            save_to_submit_buf(submit_p, (void *)&daddr, sizeof(u32), UINT_T, DEC_ARG(0, *tags));
-            argnum += 1;
-        }
-        if (dport != 0) {
-            save_to_submit_buf(submit_p, (void *)&dport, sizeof(u16), UINT_T, DEC_ARG(1, *tags));
-            argnum += 1;
-        }
+//        if (daddr != 0) {
+//            save_to_submit_buf(submit_p, (void *)&daddr, sizeof(u32), UINT_T, DEC_ARG(0, *tags));
+//            argnum += 1;
+//        }
+//        if (dport != 0) {
+//            save_to_submit_buf(submit_p, (void *)&dport, sizeof(u16), UINT_T, DEC_ARG(1, *tags));
+//            argnum += 1;
+//        }
+        save_to_submit_buf(submit_p, (void *)&daddr, sizeof(u32), INT_T, DEC_ARG(0, *tags));
+        save_to_submit_buf(submit_p, (void *)&dport, sizeof(u16), INT_T, DEC_ARG(1, *tags));
 
     }
     else if (sa_fam == AF_INET6) {
@@ -2272,14 +2328,16 @@ int BPF_KPROBE(trace_security_socket_connect)
         dport6 = __bpf_ntohs(dport6);
 
         // saving to submit buffer
-        if (daddr6 != 0) {
-            save_to_submit_buf(submit_p, (void *)&daddr6, sizeof(unsigned __int128), UINT_T, DEC_ARG(0, *tags));
-            argnum += 1;
-        }
-        if (dport6 != 0) {
-            save_to_submit_buf(submit_p, (void *)&dport6, sizeof(u16), UINT_T, DEC_ARG(1, *tags));
-            argnum += 1;
-        }
+//        if (daddr6 != 0) {
+//            save_to_submit_buf(submit_p, (void *)&daddr6, sizeof(unsigned __int128), UINT_T, DEC_ARG(0, *tags));
+//            argnum += 1;
+//        }
+//        if (dport6 != 0) {
+//            save_to_submit_buf(submit_p, (void *)&dport6, sizeof(u16), UINT_T, DEC_ARG(1, *tags));
+//            argnum += 1;
+//        }
+        save_to_submit_buf(submit_p, (void *)&daddr6, sizeof(unsigned __int128), ULONG_T, DEC_ARG(0, *tags));
+        save_to_submit_buf(submit_p, (void *)&dport6, sizeof(u16), INT_T, DEC_ARG(1, *tags));
     }
 
 //    // getting destination IP
@@ -2291,8 +2349,8 @@ int BPF_KPROBE(trace_security_socket_connect)
 //    dport = __bpf_ntohs(dport);
 
     // change arguments number dynamically
-    context.argnum = argnum;
-    save_context_to_buf(submit_p, (void*)&context);
+//    context.argnum = argnum;
+//    save_context_to_buf(submit_p, (void*)&context);
     events_perf_submit(ctx);
     return 0;
 };
@@ -2326,12 +2384,13 @@ int BPF_KPROBE(trace_security_socket_accept)
     struct sock *sk;
 
     struct socket *sock = (struct socket *)PT_REGS_PARM1(ctx);
+    struct socket *new_sock = (struct socket *)PT_REGS_PARM2(ctx);
+
+    // save sock pointer to be used when 'accept'/'accept4' syscall finishes
+    save_retval((u64)new_sock, SECURITY_SOCKET_ACCEPT);
 
     // getting struct sock from socket
     bpf_probe_read(&sk, sizeof(sk), &sock->sk);
-
-    // save sock pointer to be used when 'accept' syscall finishes
-    save_retval((u64)sk, SECURITY_SOCKET_ACCEPT);
 
     // getting socket family
     bpf_probe_read(&family, sizeof(family), &sk->sk_family);
