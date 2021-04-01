@@ -36,6 +36,8 @@
 #define KBUILD_MODNAME "tracee"
 #include <net/sock.h>
 #include <net/inet_sock.h>
+#include <net/ipv6.h>
+#include <linux/ipv6.h>
 #include <bpf_endian.h>
 
 #include <uapi/linux/bpf.h>
@@ -298,6 +300,13 @@ typedef struct network_connection_v4 {
     u32 remote_address;
     u16 remote_port;
 } net_conn_v4_t;
+
+typedef struct network_connection_v6 {
+    struct in6_addr local_address;
+    u16 local_port;
+    struct in6_addr remote_address;
+    u16 remote_port;
+} net_conn_v6_t;
 
 typedef struct local_net_id {
     u32 address;
@@ -1488,6 +1497,54 @@ static __always_inline int get_network_details_from_socket_v4(struct socket *soc
     bpf_probe_read(&sk, sizeof(sk), &sock->sk);
 
     return get_network_details_from_sock_v4(sk, net_details, peer);
+}
+
+static __always_inline int get_network_details_from_sock_v6(struct sock *sk, net_conn_v6_t *net_details, int peer)
+{
+    struct inet_sock *inet = inet_sk(sk);
+    struct ipv6_pinfo *np = inet6_sk(sk);
+
+    struct in6_addr addr = {};
+    if (ipv6_addr_any(&sk->sk_v6_rcv_saddr)){
+        bpf_probe_read(&addr, sizeof(addr), &np->saddr);
+    }
+    else {
+        bpf_probe_read(&addr, sizeof(addr), &sk->sk_v6_rcv_saddr);
+    }
+
+    if ( peer ) {
+
+        net_details->local_address = addr;
+        bpf_probe_read(&net_details->local_port, sizeof(net_details->local_port), &inet->inet_sport);
+        bpf_probe_read(&net_details->remote_address, sizeof(net_details->remote_address), &sk->sk_v6_daddr);
+        bpf_probe_read(&net_details->remote_port, sizeof(net_details->remote_port), &inet->inet_dport);
+
+//        net_details->local_address = __bpf_ntohl(net_details->local_address);
+//        net_details->local_port = __bpf_ntohs(net_details->local_port);
+//        net_details->remote_address = __bpf_ntohl(net_details->remote_address);
+//        net_details->remote_port = __bpf_ntohs(net_details->remote_port);
+    }
+    else {
+        bpf_probe_read(&net_details->local_address, sizeof(net_details->local_address), &sk->sk_v6_daddr);
+        bpf_probe_read(&net_details->local_port, sizeof(net_details->local_port), &inet->inet_dport);
+        net_details->remote_address = addr;
+        bpf_probe_read(&net_details->remote_port, sizeof(net_details->remote_port), &inet->inet_sport);
+
+//        net_details->local_address = __bpf_ntohl(net_details->local_address);
+//        net_details->local_port = __bpf_ntohs(net_details->local_port);
+    }
+
+    return 0;
+}
+
+static __always_inline int get_network_details_from_socket_v6(struct socket *sock, net_conn_v6_t *net_details, int peer)
+{
+    struct sock *sk;
+
+    // getting struct sock from socket
+    bpf_probe_read(&sk, sizeof(sk), &sock->sk);
+
+    return get_network_details_from_sock_v6(sk, net_details, peer);
 }
 
 /*============================== SYSCALL HOOKS ==============================*/
