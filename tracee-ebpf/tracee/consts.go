@@ -894,6 +894,6 @@ var EventsIDToParams = map[int32][]external.ArgMeta{
 	MagicWriteEventID:          	{{Type: "const char*", Name: "pathname"}, {Type: "bytes", Name: "bytes"}},
 	SecuritySocketConnectEventID:	{{Type: "int", Name: "dst_addr"}, {Type: "int", Name: "dst_port"}, {Type: "int", Name: "src_addr"}, {Type: "int", Name: "src_port"}},
 	SecuritySocketAcceptEventID:	{{Type: "int", Name: "dst_addr"}, {Type: "int", Name: "dst_port"}, {Type: "int", Name: "src_addr"}, {Type: "int", Name: "src_port"}},
-	RetConnectEventID:				{{Type: "int", Name: "local_addr"}, {Type: "int", Name: "local_port"}, {Type: "int", Name: "remote_addr"}, {Type: "int", Name: "remote_port"}},
+	RetConnectEventID:				{{Type: "int", Name: "remote_addr"}, {Type: "int", Name: "remote_port"}, {Type: "int", Name: "local_addr"}, {Type: "int", Name: "local_port"}},
 	RetAcceptEventID:				{{Type: "int", Name: "local_addr"}, {Type: "int", Name: "local_port"}, {Type: "int", Name: "remote_addr"}, {Type: "int", Name: "remote_port"}},
 }
