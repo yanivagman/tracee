@@ -299,6 +299,11 @@ typedef struct network_connection_v4 {
     u16 remote_port;
 } net_conn_v4_t;
 
+typedef struct local_net_id {
+    u32 address;
+    u16 port;
+} local_net_id_t;
+
 /*================================ KERNEL STRUCTS =============================*/
 
 struct mnt_namespace {
@@ -335,6 +340,7 @@ BPF_HASH(bin_args_map, u64, bin_args_t);                // Persist args for send
 BPF_HASH(sys_32_to_64_map, u32, u32);                   // Map 32bit syscalls numbers to 64bit syscalls numbers
 BPF_HASH(params_types_map, u32, u64);                   // Encoded parameters types for event
 BPF_HASH(params_names_map, u32, u64);                   // Encoded parameters names for event
+BPF_HASH(network_map, local_net_id_t, u32);             // network identifier to context
 BPF_ARRAY(file_filter, path_filter_t, 3);               // Used to filter vfs_write events
 BPF_ARRAY(string_store, path_filter_t, 1);              // Store strings from userspace
 BPF_PERCPU_ARRAY(bufs, buf_t, MAX_BUFFERS);             // Percpu global buffer variables
@@ -1661,6 +1667,15 @@ int tracepoint__raw_syscalls__sys_exit(struct bpf_raw_tracepoint_args *ctx)
 //                save_to_submit_buf(submit_p, (void *)&net_details.local_port, sizeof(u16), INT_T, DEC_ARG(1, *tags));
                 save_to_submit_buf(submit_p, (void *)&net_details.remote_address, sizeof(u32), UINT_T, DEC_ARG(0, *tags));
                 save_to_submit_buf(submit_p, (void *)&net_details.remote_port, sizeof(u16), INT_T, DEC_ARG(1, *tags));
+
+                if ( net_details.local_address && net_details.local_port){
+                    // update network map with this new connection
+                    local_net_id_t connect_id = {};
+                    connect_id.address = net_details.local_address;
+                    connect_id.port = net_details.local_port;
+                    bpf_map_update_elem(&network_map, &connect_id, &context.host_tid, BPF_ANY);
+                }
+
             }
             // we don't yet support IPv6
 //            else if ( family == AF_INET6 ) {
@@ -1711,6 +1726,14 @@ int tracepoint__raw_syscalls__sys_exit(struct bpf_raw_tracepoint_args *ctx)
                 save_to_submit_buf(submit_p, (void *)&net_details.local_port, sizeof(u16), UINT_T, DEC_ARG(1, *tags));
 //                save_to_submit_buf(submit_p, (void *)&net_details.remote_address, sizeof(u32), UINT_T, DEC_ARG(2, *tags));
 //                save_to_submit_buf(submit_p, (void *)&net_details.remote_port, sizeof(u16), UINT_T, DEC_ARG(3, *tags));
+
+                if ( net_details.local_address && net_details.local_port){
+                    // update network map with this new connection
+                    local_net_id_t accept_id = {};
+                    accept_id.address = net_details.local_address;
+                    accept_id.port = net_details.local_port;
+                    bpf_map_update_elem(&network_map, &accept_id, &context.host_tid, BPF_ANY);
+                }
 
             }
             // we don't yet support IPv6
@@ -2241,7 +2264,6 @@ int BPF_KPROBE(trace_security_socket_connect)
 
     set_buf_off(SUBMIT_BUF_IDX, sizeof(context_t));
 
-    int argnum = 0;
     context_t context = init_and_save_context(ctx, submit_p, SECURITY_SOCKET_CONNECT, 4 /*argnum*/, 0 /*ret*/);
 
     // getting event tags
