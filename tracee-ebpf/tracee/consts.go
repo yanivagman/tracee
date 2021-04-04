@@ -100,6 +100,7 @@ const (
 	sockAddrT
 	alertT
 	bytesT
+	u16T
 )
 
 // argTag is an enum that encodes the argument types that the BPF program may write to the shared buffer
@@ -892,8 +893,8 @@ var EventsIDToParams = map[int32][]external.ArgMeta{
 	CommitCredsEventID:         	{{Type: "int", Name: "old_euid"}, {Type: "int", Name: "new_euid"}, {Type: "int", Name: "old_egid"}, {Type: "int", Name: "new_egid"}, {Type: "int", Name: "old_fsuid"}, {Type: "int", Name: "new_fsuid"}, {Type: "u64", Name: "old_cap_eff"}, {Type: "u64", Name: "new_cap_eff"}},
 	SwitchTaskNSEventID:        	{{Type: "pid_t", Name: "pid"}, {Type: "u32", Name: "new_mnt"}, {Type: "u32", Name: "new_pid"}, {Type: "u32", Name: "new_uts"}, {Type: "u32", Name: "new_ipc"}, {Type: "u32", Name: "new_net"}, {Type: "u32", Name: "new_cgroup"}},
 	MagicWriteEventID:          	{{Type: "const char*", Name: "pathname"}, {Type: "bytes", Name: "bytes"}},
-	SecuritySocketConnectEventID:	{{Type: "int", Name: "dst_addr"}, {Type: "int", Name: "dst_port"}, {Type: "int", Name: "src_addr"}, {Type: "int", Name: "src_port"}},
-	SecuritySocketAcceptEventID:	{{Type: "int", Name: "dst_addr"}, {Type: "int", Name: "dst_port"}, {Type: "int", Name: "src_addr"}, {Type: "int", Name: "src_port"}},
+	SecuritySocketConnectEventID:	{{Type: "int", Name: "remote_addr"}, {Type: "int", Name: "remote_port"}, {Type: "int", Name: "local_addr"}, {Type: "int", Name: "local_port"}},
+	SecuritySocketAcceptEventID:	{{Type: "int", Name: "local_addr"}, {Type: "int", Name: "local_port"}, {Type: "int", Name: "remote_addr"}, {Type: "int", Name: "remote_port"}},
 	RetConnectEventID:				{{Type: "int", Name: "remote_addr"}, {Type: "int", Name: "remote_port"}, {Type: "int", Name: "local_addr"}, {Type: "int", Name: "local_port"}},
 	RetAcceptEventID:				{{Type: "int", Name: "local_addr"}, {Type: "int", Name: "local_port"}, {Type: "int", Name: "remote_addr"}, {Type: "int", Name: "remote_port"}},
 }

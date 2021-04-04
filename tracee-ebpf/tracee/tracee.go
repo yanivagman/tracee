@@ -905,7 +905,7 @@ func (t *Tracee) Close() {
 	if t.bpfModule != nil {
 		t.bpfModule.Close()
 	}
-	t.printer.Close()
+	//t.printer.Close()
 }
 
 func boolToUInt32(b bool) uint32 {
@@ -1543,6 +1543,10 @@ func readArgFromBuff(dataBuff io.Reader) (argTag, interface{}, error) {
 		return argTag, nil, fmt.Errorf("error reading arg tag: %v", err)
 	}
 	switch argType {
+	case u16T:
+		var data uint16
+		err = binary.Read(dataBuff, binary.LittleEndian, &data)
+		res = data
 	case intT:
 		var data int32
 		err = binary.Read(dataBuff, binary.LittleEndian, &data)
