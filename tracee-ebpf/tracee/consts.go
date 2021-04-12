@@ -893,8 +893,8 @@ var EventsIDToParams = map[int32][]external.ArgMeta{
 	CommitCredsEventID:         	{{Type: "int", Name: "old_euid"}, {Type: "int", Name: "new_euid"}, {Type: "int", Name: "old_egid"}, {Type: "int", Name: "new_egid"}, {Type: "int", Name: "old_fsuid"}, {Type: "int", Name: "new_fsuid"}, {Type: "u64", Name: "old_cap_eff"}, {Type: "u64", Name: "new_cap_eff"}},
 	SwitchTaskNSEventID:        	{{Type: "pid_t", Name: "pid"}, {Type: "u32", Name: "new_mnt"}, {Type: "u32", Name: "new_pid"}, {Type: "u32", Name: "new_uts"}, {Type: "u32", Name: "new_ipc"}, {Type: "u32", Name: "new_net"}, {Type: "u32", Name: "new_cgroup"}},
 	MagicWriteEventID:          	{{Type: "const char*", Name: "pathname"}, {Type: "bytes", Name: "bytes"}},
-	SecuritySocketConnectEventID:	{{Type: "struct sockaddr*", Name: "addr"}},
-	SecuritySocketAcceptEventID:	{{Type: "struct sockaddr*", Name: "remote_addr"}},
+	SecuritySocketConnectEventID:	{{Type: "struct sockaddr*", Name: "remote_addr"}},
+	SecuritySocketAcceptEventID:	{{Type: "struct sockaddr*", Name: "local_addr"}},
 	RetConnectEventID:				{{Type: "struct sockaddr*", Name: "remote_addr"}, {Type: "struct sockaddr*", Name: "local_addr"}},
 	RetAcceptEventID:				{{Type: "struct sockaddr*", Name: "local_addr"}, {Type: "struct sockaddr*", Name: "remote_addr"}},
 }
