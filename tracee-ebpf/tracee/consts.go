@@ -154,6 +154,7 @@ const (
 	CommitCredsEventID
 	SwitchTaskNSEventID
 	MagicWriteEventID
+	SecuritySocketCreateEventID
 	SecuritySocketConnectEventID
 	SecuritySocketAcceptEventID
 	SecuritySocketBindEventID
@@ -531,6 +532,7 @@ var EventsIDToEvent = map[int32]EventConfig{
 	CommitCredsEventID:         	{ID: CommitCredsEventID, ID32Bit: sys32undefined, Name: "commit_creds", Probes: []probe{{event: "commit_creds", attach: kprobe, fn: "trace_commit_creds"}}, Sets: []string{}},
 	SwitchTaskNSEventID:        	{ID: SwitchTaskNSEventID, ID32Bit: sys32undefined, Name: "switch_task_ns", Probes: []probe{{event: "switch_task_namespaces", attach: kprobe, fn: "trace_switch_task_namespaces"}}, Sets: []string{}},
 	MagicWriteEventID:          	{ID: MagicWriteEventID, ID32Bit: sys32undefined, Name: "magic_write", Probes: []probe{}, Sets: []string{}},
+	SecuritySocketCreateEventID:	{ID: SecuritySocketCreateEventID, ID32Bit: sys32undefined, Name: "security_socket_create", Probes: []probe{{event: "security_socket_create", attach: kprobe, fn: "trace_security_socket_create"}}, Sets: []string{"default"}},
 	SecuritySocketConnectEventID:	{ID: SecuritySocketConnectEventID, ID32Bit: sys32undefined, Name: "security_socket_connect", Probes: []probe{{event: "security_socket_connect", attach: kprobe, fn: "trace_security_socket_connect"}}, Sets: []string{"default"}},
 	SecuritySocketAcceptEventID:	{ID: SecuritySocketAcceptEventID, ID32Bit: sys32undefined, Name: "security_socket_accept", Probes: []probe{{event: "security_socket_accept", attach: kprobe, fn: "trace_security_socket_accept"}}, Sets: []string{"default"}},
 	SecuritySocketBindEventID: 		{ID: SecuritySocketBindEventID, ID32Bit: sys32undefined, Name: "security_socket_bind", Probes: []probe{{event: "security_socket_bind", attach: kprobe, fn: "trace_security_socket_bind"}}, Sets: []string{"default"}},
@@ -895,6 +897,7 @@ var EventsIDToParams = map[int32][]external.ArgMeta{
 	CommitCredsEventID:         	{{Type: "int", Name: "old_euid"}, {Type: "int", Name: "new_euid"}, {Type: "int", Name: "old_egid"}, {Type: "int", Name: "new_egid"}, {Type: "int", Name: "old_fsuid"}, {Type: "int", Name: "new_fsuid"}, {Type: "u64", Name: "old_cap_eff"}, {Type: "u64", Name: "new_cap_eff"}},
 	SwitchTaskNSEventID:        	{{Type: "pid_t", Name: "pid"}, {Type: "u32", Name: "new_mnt"}, {Type: "u32", Name: "new_pid"}, {Type: "u32", Name: "new_uts"}, {Type: "u32", Name: "new_ipc"}, {Type: "u32", Name: "new_net"}, {Type: "u32", Name: "new_cgroup"}},
 	MagicWriteEventID:          	{{Type: "const char*", Name: "pathname"}, {Type: "bytes", Name: "bytes"}},
+	SecuritySocketCreateEventID:	{{Type: "int", Name: "family"}, {Type: "int", Name: "type"}, {Type: "int", Name: "protocol"}, {Type: "int", Name: "kern"}},
 	SecuritySocketConnectEventID:	{{Type: "struct sockaddr*", Name: "remote_addr"}},
 	SecuritySocketAcceptEventID:	{{Type: "struct sockaddr*", Name: "local_addr"}},
 	SecuritySocketBindEventID:		{{Type: "struct sockaddr*", Name: "local_addr"}},
