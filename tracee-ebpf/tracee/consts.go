@@ -156,6 +156,7 @@ const (
 	MagicWriteEventID
 	SecuritySocketConnectEventID
 	SecuritySocketAcceptEventID
+	SecuritySocketBindEventID
 	RetConnectEventID
 	RetAcceptEventID
 	MaxEventID
@@ -532,6 +533,7 @@ var EventsIDToEvent = map[int32]EventConfig{
 	MagicWriteEventID:          	{ID: MagicWriteEventID, ID32Bit: sys32undefined, Name: "magic_write", Probes: []probe{}, Sets: []string{}},
 	SecuritySocketConnectEventID:	{ID: SecuritySocketConnectEventID, ID32Bit: sys32undefined, Name: "security_socket_connect", Probes: []probe{{event: "security_socket_connect", attach: kprobe, fn: "trace_security_socket_connect"}}, Sets: []string{"default"}},
 	SecuritySocketAcceptEventID:	{ID: SecuritySocketAcceptEventID, ID32Bit: sys32undefined, Name: "security_socket_accept", Probes: []probe{{event: "security_socket_accept", attach: kprobe, fn: "trace_security_socket_accept"}}, Sets: []string{"default"}},
+	SecuritySocketBindEventID: 		{ID: SecuritySocketBindEventID, ID32Bit: sys32undefined, Name: "security_socket_bind", Probes: []probe{{event: "security_socket_bind", attach: kprobe, fn: "trace_security_socket_bind"}}, Sets: []string{"default"}},
 	RetConnectEventID:				{ID: RetConnectEventID, ID32Bit: sys32undefined, Name: "ret_connect", Probes: []probe{}, Sets: []string{"default"}},
 	RetAcceptEventID:				{ID: RetAcceptEventID, ID32Bit: sys32undefined, Name: "ret_accept", Probes: []probe{}, Sets: []string{"default"}},
 }
@@ -895,6 +897,7 @@ var EventsIDToParams = map[int32][]external.ArgMeta{
 	MagicWriteEventID:          	{{Type: "const char*", Name: "pathname"}, {Type: "bytes", Name: "bytes"}},
 	SecuritySocketConnectEventID:	{{Type: "struct sockaddr*", Name: "remote_addr"}},
 	SecuritySocketAcceptEventID:	{{Type: "struct sockaddr*", Name: "local_addr"}},
+	SecuritySocketBindEventID:		{{Type: "struct sockaddr*", Name: "local_addr"}},
 	RetConnectEventID:				{{Type: "struct sockaddr*", Name: "remote_addr"}, {Type: "struct sockaddr*", Name: "local_addr"}},
 	RetAcceptEventID:				{{Type: "struct sockaddr*", Name: "local_addr"}, {Type: "struct sockaddr*", Name: "remote_addr"}},
 }

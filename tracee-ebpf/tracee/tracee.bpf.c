@@ -152,9 +152,10 @@
 #define MAGIC_WRITE             1013
 #define SECURITY_SOCKET_CONNECT 1014
 #define SECURITY_SOCKET_ACCEPT  1015
-#define RET_CONNECT             1016
-#define RET_ACCEPT              1017
-#define MAX_EVENT_ID            1018
+#define SECURITY_SOCKET_BIND    1016
+#define RET_CONNECT             1017
+#define RET_ACCEPT              1018
+#define MAX_EVENT_ID            1019
 
 #define CONFIG_SHOW_SYSCALL         1
 #define CONFIG_EXEC_ENV             2
@@ -2538,6 +2539,66 @@ int BPF_KPROBE(trace_security_socket_accept)
         local.sin6_scope_id = 0;
 
         save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(0, *tags));
+    }
+
+    events_perf_submit(ctx);
+    return 0;
+};
+
+SEC("kprobe/security_socket_bind")
+int BPF_KPROBE(trace_security_socket_bind)
+{
+
+    // trace the event security_socket_bind
+
+    if (!should_trace())
+        return 0;
+
+    struct socket *sock = (struct socket *)PT_REGS_PARM1(ctx);
+
+    buf_t *submit_p = get_buf(SUBMIT_BUF_IDX);
+    if (submit_p == NULL)
+        return 0;
+
+    set_buf_off(SUBMIT_BUF_IDX, sizeof(context_t));
+
+    // getting source details
+
+    u16 family;
+    struct sock *sk;
+
+    // getting struct sock from socket
+    bpf_probe_read(&sk, sizeof(sk), &sock->sk);
+
+    // getting socket family
+    bpf_probe_read(&family, sizeof(family), &sk->sk_family);
+    if ( (family != AF_INET) && (family != AF_INET6) ) {
+        return 0;
+    }
+
+    context_t context = init_and_save_context(ctx, submit_p, SECURITY_SOCKET_BIND, 1 /*argnum*/, 0 /*ret*/);
+
+    // getting event tags
+    u64 *tags = bpf_map_lookup_elem(&params_names_map, &context.eventid);
+    if (!tags) {
+        return -1;
+    }
+
+    // getting destination details
+
+    struct sockaddr *address = (struct sockaddr *)PT_REGS_PARM2(ctx);
+    sa_family_t sa_fam;
+
+    // read family from struct sockaddr*
+    bpf_probe_read(&sa_fam, sizeof(sa_fam), &address->sa_family);
+    if (sa_fam == AF_INET) {
+        // saving to submit buffer
+        save_to_submit_buf(submit_p, (void *)address, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(0, *tags));
+
+    }
+    else if (sa_fam == AF_INET6) {
+        // saving to submit buffer
+        save_to_submit_buf(submit_p, (void *)address, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(0, *tags));
     }
 
     events_perf_submit(ctx);
