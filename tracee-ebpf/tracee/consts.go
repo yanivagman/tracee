@@ -155,6 +155,7 @@ const (
 	SwitchTaskNSEventID
 	MagicWriteEventID
 	SecuritySocketCreateEventID
+	SecuritySocketListenEventID
 	SecuritySocketConnectEventID
 	SecuritySocketAcceptEventID
 	SecuritySocketBindEventID
@@ -533,6 +534,7 @@ var EventsIDToEvent = map[int32]EventConfig{
 	SwitchTaskNSEventID:        	{ID: SwitchTaskNSEventID, ID32Bit: sys32undefined, Name: "switch_task_ns", Probes: []probe{{event: "switch_task_namespaces", attach: kprobe, fn: "trace_switch_task_namespaces"}}, Sets: []string{}},
 	MagicWriteEventID:          	{ID: MagicWriteEventID, ID32Bit: sys32undefined, Name: "magic_write", Probes: []probe{}, Sets: []string{}},
 	SecuritySocketCreateEventID:	{ID: SecuritySocketCreateEventID, ID32Bit: sys32undefined, Name: "security_socket_create", Probes: []probe{{event: "security_socket_create", attach: kprobe, fn: "trace_security_socket_create"}}, Sets: []string{"default"}},
+	SecuritySocketListenEventID:	{ID: SecuritySocketListenEventID, ID32Bit: sys32undefined, Name: "security_socket_listen", Probes: []probe{{event: "security_socket_listen", attach: kprobe, fn: "trace_security_socket_listen"}}, Sets: []string{"default"}},
 	SecuritySocketConnectEventID:	{ID: SecuritySocketConnectEventID, ID32Bit: sys32undefined, Name: "security_socket_connect", Probes: []probe{{event: "security_socket_connect", attach: kprobe, fn: "trace_security_socket_connect"}}, Sets: []string{"default"}},
 	SecuritySocketAcceptEventID:	{ID: SecuritySocketAcceptEventID, ID32Bit: sys32undefined, Name: "security_socket_accept", Probes: []probe{{event: "security_socket_accept", attach: kprobe, fn: "trace_security_socket_accept"}}, Sets: []string{"default"}},
 	SecuritySocketBindEventID: 		{ID: SecuritySocketBindEventID, ID32Bit: sys32undefined, Name: "security_socket_bind", Probes: []probe{{event: "security_socket_bind", attach: kprobe, fn: "trace_security_socket_bind"}}, Sets: []string{"default"}},
@@ -898,6 +900,7 @@ var EventsIDToParams = map[int32][]external.ArgMeta{
 	SwitchTaskNSEventID:        	{{Type: "pid_t", Name: "pid"}, {Type: "u32", Name: "new_mnt"}, {Type: "u32", Name: "new_pid"}, {Type: "u32", Name: "new_uts"}, {Type: "u32", Name: "new_ipc"}, {Type: "u32", Name: "new_net"}, {Type: "u32", Name: "new_cgroup"}},
 	MagicWriteEventID:          	{{Type: "const char*", Name: "pathname"}, {Type: "bytes", Name: "bytes"}},
 	SecuritySocketCreateEventID:	{{Type: "int", Name: "family"}, {Type: "int", Name: "type"}, {Type: "int", Name: "protocol"}, {Type: "int", Name: "kern"}},
+	SecuritySocketListenEventID:	{{Type: "struct sockaddr*", Name: "local_addr"}, {Type: "int", Name: "backlog"}},
 	SecuritySocketConnectEventID:	{{Type: "struct sockaddr*", Name: "remote_addr"}},
 	SecuritySocketAcceptEventID:	{{Type: "struct sockaddr*", Name: "local_addr"}},
 	SecuritySocketBindEventID:		{{Type: "struct sockaddr*", Name: "local_addr"}},
