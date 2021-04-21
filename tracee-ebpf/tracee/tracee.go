@@ -1194,6 +1194,25 @@ func (t *Tracee) prepareArgsForPrint(ctx *context, args map[argTag]interface{}) 
 			s = fmt.Sprintf("{%s}", s)
 			args[t.EncParamName[ctx.EventID%2]["remote_addr"]] = s
 		}
+	case RetConnectEventID:
+		if sockAddr, isStrMap := args[t.EncParamName[ctx.EventID%2]["remote_addr"]].(map[string]string); isStrMap {
+			var s string
+			for key, val := range sockAddr {
+				s += fmt.Sprintf("'%s': '%s',", key, val)
+			}
+			s = strings.TrimSuffix(s, ",")
+			s = fmt.Sprintf("{%s}", s)
+			args[t.EncParamName[ctx.EventID%2]["remote_addr"]] = s
+		}
+		if sockAddr, isStrMap := args[t.EncParamName[ctx.EventID%2]["local_addr"]].(map[string]string); isStrMap {
+			var s string
+			for key, val := range sockAddr {
+				s += fmt.Sprintf("'%s': '%s',", key, val)
+			}
+			s = strings.TrimSuffix(s, ",")
+			s = fmt.Sprintf("{%s}", s)
+			args[t.EncParamName[ctx.EventID%2]["local_addr"]] = s
+		}
 	case AccessEventID, FaccessatEventID:
 		if mode, isInt32 := args[t.EncParamName[ctx.EventID%2]["mode"]].(int32); isInt32 {
 			args[t.EncParamName[ctx.EventID%2]["mode"]] = helpers.ParseAccessMode(uint32(mode))
