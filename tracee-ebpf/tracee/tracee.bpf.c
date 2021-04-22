@@ -38,7 +38,6 @@
 #include <net/inet_sock.h>
 #include <net/ipv6.h>
 #include <linux/ipv6.h>
-#include <bpf_endian.h>
 
 #include <uapi/linux/bpf.h>
 #include <linux/kconfig.h>
@@ -48,6 +47,7 @@
 //#include "bpf_core_read.h"
 #include <bpf_helpers.h>
 #include <bpf_tracing.h>
+#include <bpf_endian.h>
 
 #if defined(bpf_target_x86)
 #define PT_REGS_PARM6(ctx)  ((ctx)->r9)
