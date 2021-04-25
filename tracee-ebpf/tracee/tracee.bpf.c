@@ -315,14 +315,12 @@ typedef struct local_net_id_v4 {
     u32 address;
     u16 port;
     u16 protocol;
-    u32 net_ns_id;
 } local_net_id_v4_t;
 
 typedef struct local_net_id_v6 {
     struct in6_addr address;
     u16 port;
     u16 protocol;
-    u32 net_ns_id;
 } local_net_id_v6_t;
 
 /*================================ KERNEL STRUCTS =============================*/
@@ -1841,7 +1839,6 @@ int tracepoint__raw_syscalls__sys_exit(struct bpf_raw_tracepoint_args *ctx)
                     connect_id.address = net_details.local_address;
                     connect_id.port = net_details.local_port;
                     connect_id.protocol = get_sock_protocol(sk);
-                    connect_id.net_ns_id = get_task_net_ns_id(task);
 
                     bpf_map_update_elem(&network_map_v4, &connect_id, &context.host_tid, BPF_ANY);
                 }
@@ -1876,7 +1873,6 @@ int tracepoint__raw_syscalls__sys_exit(struct bpf_raw_tracepoint_args *ctx)
                     connect_id.address = net_details.local_address;
                     connect_id.port = net_details.local_port;
                     connect_id.protocol = get_sock_protocol(sk);
-                    connect_id.net_ns_id = get_task_net_ns_id(task);
 
                     bpf_map_update_elem(&network_map_v6, &connect_id, &context.host_tid, BPF_ANY);
                 }
