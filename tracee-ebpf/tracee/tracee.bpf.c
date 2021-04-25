@@ -1597,6 +1597,12 @@ static __always_inline struct ipv6_pinfo *inet6_sk_own_impl(const struct sock *_
 
 static __always_inline int get_network_details_from_sock_v6(struct sock *sk, net_conn_v6_t *net_details, int peer)
 {
+
+    /*
+    this function is inspired by the 'inet6_getname(struct socket *sock, struct sockaddr *uaddr, int peer)' function.
+    reference: 'https://elixir.bootlin.com/linux/latest/source/net/ipv6/af_inet6.c#L509'.
+    */
+
     struct inet_sock *inet = inet_sk(sk);
     struct ipv6_pinfo *np = inet6_sk_own_impl(sk, inet);
 
@@ -1606,10 +1612,21 @@ static __always_inline int get_network_details_from_sock_v6(struct sock *sk, net
         addr = get_ipv6_pinfo_saddr(np);
     }
 
-//    net_details->flowinfo = 0;
-    net_details->flowinfo = get_ipv6_pinfo_flow_label(np);
+    /*
+    the flowinfo field can be specified by the user to indicate a network flow. how it is used by the kernel, or
+    whether its enforced to be unique is not so obvious.
+    getting this value is only supported by the kernel for outgoing packets using the 'struct ipv6_pinfo'.
+    in any case, leaving it with value of 0 won't effect our
+    representation of network flows.
+    */
+    net_details->flowinfo = 0;
+    /*
+    the scope_id field can be specified by the user to indicate the network interface from which to send a packet. this
+    only applies for link-local addresses, and is used only by the local kernel.
+    getting this value is done by using the 'ipv6_iface_scope_id(const struct in6_addr *addr, int iface)' function.
+    in any case, leaving it with value of 0 won't effect our representation of network flows.
+    */
     net_details->scope_id = 0;
-//    net_details->scope_id = ipv6_iface_scope_id(&addr, get_sock_bound_dev_if(sk));
 
     if ( peer ) {
 
