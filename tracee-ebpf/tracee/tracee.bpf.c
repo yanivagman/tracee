@@ -118,6 +118,7 @@
 #define SYS_EXIT_GROUP        231
 #define SYS_OPENAT            257
 #define SYS_EXECVEAT          322
+#define CONNECT_SYSCALL       42
 #elif defined(bpf_target_arm64)
 #define SYS_OPEN              1000 // undefined in arm64
 #define SYS_MMAP              222
