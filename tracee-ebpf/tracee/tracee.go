@@ -736,7 +736,7 @@ func (t *Tracee) populateBPFMaps() error {
 	}
 
 	sysEnterTailsBPFMap, _ := t.bpfModule.GetMap("sys_enter_tails")
-	//sysExitTailsBPFMap := t.bpfModule.GetMap("sys_exit_tails")
+	sysExitTailsBPFMap, _ := t.bpfModule.GetMap("sys_exit_tails")
 	paramsTypesBPFMap, _ := t.bpfModule.GetMap("params_types_map")
 	paramsNamesBPFMap, _ := t.bpfModule.GetMap("params_names_map")
 	for e := range t.eventsToTrace {
@@ -764,6 +764,20 @@ func (t *Tracee) populateBPFMaps() error {
 				return fmt.Errorf("error loading BPF program %s: %v", probFnName, err)
 			}
 			sysEnterTailsBPFMap.Update(e, int32(prog.GetFd()))
+		} else if e == ConnectEventID {
+			event, ok := EventsIDToEvent[e]
+			if !ok {
+				continue
+			}
+
+			probFnName := fmt.Sprintf("syscall__%s", event.Name)
+
+			// execve functions require tail call on syscall enter as they perform extra work
+			prog, err := t.bpfModule.GetProgram(probFnName)
+			if err != nil {
+				return fmt.Errorf("error loading BPF program %s: %v", probFnName, err)
+			}
+			sysExitTailsBPFMap.Update(e, int32(prog.GetFd()))
 		}
 	}
 

@@ -1786,103 +1786,6 @@ int tracepoint__raw_syscalls__sys_exit(struct bpf_raw_tracepoint_args *ctx)
         }
     }
 
-    else if (id == CONNECT_SYSCALL && (ret == 0)) {
-        u64 sock_address = 0;
-        struct sock *sk;
-
-        load_retval(&sock_address, SECURITY_SOCKET_CONNECT);
-        if (sock_address != 0) {
-
-            sk = (struct sock*)sock_address;
-
-            buf_t *submit_p = get_buf(SUBMIT_BUF_IDX);
-            if (submit_p == NULL)
-                return 0;
-            set_buf_off(SUBMIT_BUF_IDX, sizeof(context_t));
-
-            // getting source details
-
-            u16 family = get_sock_family(sk);
-            if ( (family != AF_INET) && (family != AF_INET6) ) {
-                return 0;
-            }
-
-            context_t context = init_and_save_context(ctx, submit_p, RET_CONNECT, 2 /*argnum*/, 0);
-
-            u64 *tags = bpf_map_lookup_elem(&params_names_map, &context.eventid);
-            if (!tags) {
-                return -1;
-            }
-
-            if ( family == AF_INET ) {
-
-                net_conn_v4_t net_details = {};
-
-                get_network_details_from_sock_v4(sk, &net_details, 1);
-
-                struct sockaddr_in remote;
-                remote.sin_family = family;
-                remote.sin_port = net_details.remote_port;
-                remote.sin_addr.s_addr = net_details.remote_address;
-
-                struct sockaddr_in local;
-                local.sin_family = family;
-                local.sin_port = net_details.local_port;
-                local.sin_addr.s_addr = net_details.local_address;
-
-                save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(0, *tags));
-                save_to_submit_buf(submit_p, (void *)&remote, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(1, *tags));
-
-                if ( net_details.local_address && net_details.local_port ){
-                    network_to_host_v4(&net_details);
-                    // update network map with this new connection
-                    local_net_id_v4_t connect_id = {};
-                    connect_id.address = net_details.local_address;
-                    connect_id.port = net_details.local_port;
-                    connect_id.protocol = get_sock_protocol(sk);
-
-                    bpf_map_update_elem(&network_map_v4, &connect_id, &context.host_tid, BPF_ANY);
-                }
-
-            }
-            else if ( family == AF_INET6 ) {
-                net_conn_v6_t net_details = {};
-
-                get_network_details_from_sock_v6(sk, &net_details, 1);
-
-                struct sockaddr_in6 local;
-                local.sin6_family = family;
-                local.sin6_port = net_details.local_port;
-                local.sin6_flowinfo = net_details.flowinfo;
-                local.sin6_addr = net_details.local_address;
-                local.sin6_scope_id = net_details.scope_id;
-
-                struct sockaddr_in6 remote;
-                remote.sin6_family = family;
-                remote.sin6_port = net_details.remote_port;
-                remote.sin6_flowinfo = net_details.flowinfo;
-                remote.sin6_addr = net_details.remote_address;
-                remote.sin6_scope_id = net_details.scope_id;
-
-                save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(0, *tags));
-                save_to_submit_buf(submit_p, (void *)&remote, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(1, *tags));
-
-                if ( net_details.local_address.s6_addr && net_details.local_port ){
-
-                    // update network map with this new connection
-                    local_net_id_v6_t connect_id = {};
-                    connect_id.address = net_details.local_address;
-                    connect_id.port = net_details.local_port;
-                    connect_id.protocol = get_sock_protocol(sk);
-
-                    bpf_map_update_elem(&network_map_v6, &connect_id, &context.host_tid, BPF_ANY);
-                }
-            }
-
-            events_perf_submit(ctx);
-        }
-    }
-
     if (event_chosen(RAW_SYS_EXIT)) {
         buf_t *submit_p = get_buf(SUBMIT_BUF_IDX);
         if (submit_p == NULL)
@@ -1931,6 +1834,121 @@ int tracepoint__raw_syscalls__sys_exit(struct bpf_raw_tracepoint_args *ctx)
     bpf_tail_call(ctx, &sys_exit_tails, id);
     del_retval(id);
     del_args(id);
+    return 0;
+}
+
+SEC("raw_tracepoint/sys_connect")
+int syscall__connect(void *ctx)
+{
+    args_t args = {};
+
+    bool delete_args = false;
+    if (load_args(&args, delete_args, CONNECT_SYSCALL) != 0)
+        return -1;
+
+    if (!event_chosen(CONNECT_SYSCALL))
+        return 0;
+
+    u64 ret;
+    load_retval(&ret, CONNECT_SYSCALL);
+
+    if (ret != 0) {
+        // connect syscall failed. so no need to monitor this call.
+        return 0;
+    }
+
+    u64 sock_address = 0;
+    struct sock *sk;
+
+    load_retval(&sock_address, SECURITY_SOCKET_CONNECT);
+    if (sock_address != 0) {
+
+        sk = (struct sock*)sock_address;
+
+        buf_t *submit_p = get_buf(SUBMIT_BUF_IDX);
+        if (submit_p == NULL)
+            return 0;
+        set_buf_off(SUBMIT_BUF_IDX, sizeof(context_t));
+
+        u16 family = get_sock_family(sk);
+        if ( (family != AF_INET) && (family != AF_INET6) ) {
+            return 0;
+        }
+
+        context_t context = init_and_save_context(ctx, submit_p, RET_CONNECT, 2 /*argnum*/, 0);
+
+        u64 *tags = bpf_map_lookup_elem(&params_names_map, &context.eventid);
+        if (!tags) {
+            return -1;
+        }
+
+        if ( family == AF_INET ) {
+
+            net_conn_v4_t net_details = {};
+
+            get_network_details_from_sock_v4(sk, &net_details, 1);
+
+            struct sockaddr_in remote;
+            remote.sin_family = family;
+            remote.sin_port = net_details.remote_port;
+            remote.sin_addr.s_addr = net_details.remote_address;
+
+            struct sockaddr_in local;
+            local.sin_family = family;
+            local.sin_port = net_details.local_port;
+            local.sin_addr.s_addr = net_details.local_address;
+
+            save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(0, *tags));
+            save_to_submit_buf(submit_p, (void *)&remote, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(1, *tags));
+
+            if ( net_details.local_address && net_details.local_port ){
+                network_to_host_v4(&net_details);
+                // update network map with this new connection
+                local_net_id_v4_t connect_id = {};
+                connect_id.address = net_details.local_address;
+                connect_id.port = net_details.local_port;
+                connect_id.protocol = get_sock_protocol(sk);
+
+                bpf_map_update_elem(&network_map_v4, &connect_id, &context.host_tid, BPF_ANY);
+            }
+
+        }
+        else if ( family == AF_INET6 ) {
+            net_conn_v6_t net_details = {};
+
+            get_network_details_from_sock_v6(sk, &net_details, 1);
+
+            struct sockaddr_in6 local;
+            local.sin6_family = family;
+            local.sin6_port = net_details.local_port;
+            local.sin6_flowinfo = net_details.flowinfo;
+            local.sin6_addr = net_details.local_address;
+            local.sin6_scope_id = net_details.scope_id;
+
+            struct sockaddr_in6 remote;
+            remote.sin6_family = family;
+            remote.sin6_port = net_details.remote_port;
+            remote.sin6_flowinfo = net_details.flowinfo;
+            remote.sin6_addr = net_details.remote_address;
+            remote.sin6_scope_id = net_details.scope_id;
+
+            save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(0, *tags));
+            save_to_submit_buf(submit_p, (void *)&remote, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(1, *tags));
+
+            if ( net_details.local_address.s6_addr && net_details.local_port ){
+
+                // update network map with this new connection
+                local_net_id_v6_t connect_id = {};
+                connect_id.address = net_details.local_address;
+                connect_id.port = net_details.local_port;
+                connect_id.protocol = get_sock_protocol(sk);
+
+                bpf_map_update_elem(&network_map_v6, &connect_id, &context.host_tid, BPF_ANY);
+            }
+        }
+
+        events_perf_submit(ctx);
+    }
     return 0;
 }
 
