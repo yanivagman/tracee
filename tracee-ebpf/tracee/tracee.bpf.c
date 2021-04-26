@@ -2575,6 +2575,17 @@ int BPF_KPROBE(trace_security_socket_accept)
 
         save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(0, *tags));
 
+        if ( net_details.local_address && net_details.local_port ){
+            network_to_host_v4(&net_details);
+            // update network map with this new connection
+            local_net_id_v4_t connect_id = {};
+            connect_id.address = net_details.local_address;
+            connect_id.port = net_details.local_port;
+            connect_id.protocol = get_sock_protocol(sk);
+
+            bpf_map_update_elem(&network_map_v4, &connect_id, &context.host_tid, BPF_ANY);
+        }
+
     }
     else if ( family == AF_INET6 ){
         net_conn_v6_t net_details = {};
@@ -2589,6 +2600,17 @@ int BPF_KPROBE(trace_security_socket_accept)
         local.sin6_scope_id = net_details.scope_id;
 
         save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(0, *tags));
+
+        if ( net_details.local_address.s6_addr && net_details.local_port ){
+
+            // update network map with this new connection
+            local_net_id_v6_t connect_id = {};
+            connect_id.address = net_details.local_address;
+            connect_id.port = net_details.local_port;
+            connect_id.protocol = get_sock_protocol(sk);
+
+            bpf_map_update_elem(&network_map_v6, &connect_id, &context.host_tid, BPF_ANY);
+        }
     }
 
     events_perf_submit(ctx);
