@@ -132,6 +132,7 @@
 #define SYS_EXIT_GROUP        94
 #define SYS_OPENAT            56
 #define SYS_EXECVEAT          281
+#define CONNECT_SYSCALL       203
 #endif
 
 #define RAW_SYS_ENTER           1000
