@@ -644,8 +644,13 @@ static __always_inline u16 get_sock_protocol(struct sock *sock)
 
     note: we define protocol as u16 so it'll be compatible with newer kernels.
     */
+
     u16 protocol = 0;
     bpf_probe_read(&protocol, 1, (void *)((long)&sock->sk_gso_max_segs) - 3);
+
+    // we have to shift right 8 bits because in these kernel versions 'protocol' is only 8 bits.
+    protocol = protocol >> 8;
+
     return protocol;
 #else
     // kernel 5.6 onwards:
