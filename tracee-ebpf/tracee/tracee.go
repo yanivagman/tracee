@@ -107,6 +107,7 @@ type CaptureConfig struct {
 	FilterFileWrite []string
 	Exec            bool
 	Mem             bool
+	NetIfaces       []string
 }
 
 type OutputConfig struct {
@@ -270,7 +271,12 @@ func New(cfg Config) (*Tracee, error) {
 		setEssential(MemProtAlertEventID)
 	}
 
-	// todo: if capture net was chosen, set essential events (security_socket_connect, security_socket_accept...)
+	if cfg.Capture.NetIfaces != nil {
+		setEssential(ConnectEventID)
+		setEssential(RetConnectEventID)
+		setEssential(SecuritySocketConnectEventID)
+		setEssential(SecuritySocketAcceptEventID)
+	}
 
 	// create tracee
 	t := &Tracee{
@@ -316,6 +322,7 @@ func New(cfg Config) (*Tracee, error) {
 
 	if t.eventsToTrace[RetConnectEventID] {
 		setEssential(ConnectEventID)
+		setEssential(SecuritySocketConnectEventID)
 	}
 
 	// Compile final list of events to trace including essential events
@@ -371,32 +378,34 @@ func New(cfg Config) (*Tracee, error) {
 		return nil, fmt.Errorf("error creating readiness file: %v", err)
 	}
 
-	pcapFile, err := os.Create(path.Join(t.config.Capture.OutputPath, "capture.pcap"))
-	if err != nil {
-		return nil, fmt.Errorf("error creating pcap file: %v", err)
-	}
-	t.pcapFile = pcapFile
+	if t.config.Capture.NetIfaces != nil {
+		pcapFile, err := os.Create(path.Join(t.config.Capture.OutputPath, "capture.pcap"))
+		if err != nil {
+			return nil, fmt.Errorf("error creating pcap file: %v", err)
+		}
+		t.pcapFile = pcapFile
 
-	// todo: handle multiple ifaces (like xdpdump: https://github.com/cloudflare/xdpcap/blob/master/cmd/xdpcap/main.go)
-	ngIface := pcapgo.NgInterface{
-		Name:       "test1",
-		Comment:    "tc wlp2s0 iface",
-		Filter:     "",
-		LinkType:   layers.LinkTypeEthernet,
-		SnapLength: uint32(math.MaxUint16),
-	}
+		// todo: handle multiple ifaces (like xdpdump: https://github.com/cloudflare/xdpcap/blob/master/cmd/xdpcap/main.go)
+		ngIface := pcapgo.NgInterface{
+			Name:       "test1",
+			Comment:    "tc wlp2s0 iface",
+			Filter:     "",
+			LinkType:   layers.LinkTypeEthernet,
+			SnapLength: uint32(math.MaxUint16),
+		}
 
-	pcapWriter, err := pcapgo.NewNgWriterInterface(t.pcapFile, ngIface, pcapgo.NgWriterOptions{})
-	if err != nil {
-		return nil, err
-	}
+		pcapWriter, err := pcapgo.NewNgWriterInterface(t.pcapFile, ngIface, pcapgo.NgWriterOptions{})
+		if err != nil {
+			return nil, err
+		}
 
-	// Flush the header
-	err = pcapWriter.Flush()
-	if err != nil {
-		return nil, err
+		// Flush the header
+		err = pcapWriter.Flush()
+		if err != nil {
+			return nil, err
+		}
+		t.pcapWriter = pcapWriter
 	}
-	t.pcapWriter = pcapWriter
 
 	// Get refernce to stack trace addresses map
 	StackAddressesMap, err := t.bpfModule.GetMap("stack_addresses")
@@ -405,7 +414,6 @@ func New(cfg Config) (*Tracee, error) {
 	}
 	t.StackAddressesMap = StackAddressesMap
 
-	// todo: open a bug about all the returns that are made after initBPF and don't call t.Close()
 	return t, nil
 }
 
@@ -956,59 +964,56 @@ func (t *Tracee) initBPF(bpfObjectPath string) error {
 		return err
 	}
 
-	// Todo: let the user choose the interface (using capture net:iface_name)
-	iface, err := netlink.LinkByName("wlp2s0")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s\n", err)
-		os.Exit(1)
-	}
+	if t.config.Capture.NetIfaces != nil {
+		ifaceName := t.config.Capture.NetIfaces[0]
+		iface, err := netlink.LinkByName(ifaceName)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s\n", err)
+			os.Exit(1)
+		}
 
-	qdisc := &ClsAct{QdiscAttrs: netlink.QdiscAttrs{
-		LinkIndex: iface.Attrs().Index,
-		Handle:    netlink.MakeHandle(0xffff, 0),
-		Parent:    netlink.HANDLE_CLSACT,
-	}}
+		qdisc := &ClsAct{QdiscAttrs: netlink.QdiscAttrs{
+			LinkIndex: iface.Attrs().Index,
+			Handle:    netlink.MakeHandle(0xffff, 0),
+			Parent:    netlink.HANDLE_CLSACT,
+		}}
 
-	handle, err := netlink.NewHandle(unix.NETLINK_ROUTE)
-	if err != nil {
-		return err
-	}
-
-	// todo: handle the case that clsact device already exists.
-	// may happen when we panic and didn't delete the qdisc (for example)
-	// tc commands:
-	// tc qdisc show dev wlp2s0
-	// tc qdisc del dev wlp2s0 clsact
-	if err = handle.QdiscAdd(qdisc); err != nil {
-		if !errors.Is(err, os.ErrExist) {
+		handle, err := netlink.NewHandle(unix.NETLINK_ROUTE)
+		if err != nil {
 			return err
 		}
+
+		if err = handle.QdiscAdd(qdisc); err != nil {
+			if !errors.Is(err, os.ErrExist) {
+				return err
+			}
+		}
+
+		egressProg, _ := t.bpfModule.GetProgram("tc_egress")
+		if egressProg == nil {
+			return fmt.Errorf("Couldn't find tc egress program")
+		}
+
+		ingressProg, _ := t.bpfModule.GetProgram("tc_ingress")
+		if ingressProg == nil {
+			return fmt.Errorf("Couldn't find tc ingress program")
+		}
+
+		probe := netProbe{
+			iface:     iface,
+			handle:    handle,
+			egressFd:  int(egressProg.GetFd()),
+			ingressFd: int(ingressProg.GetFd()),
+		}
+
+		probe.qdisc = qdisc
+
+		if err = probe.createFilters(); err != nil {
+			return err
+		}
+
+		t.tcProbe = &probe
 	}
-
-	egressProg, _ := t.bpfModule.GetProgram("tc_egress")
-	if egressProg == nil {
-		return fmt.Errorf("Couldn't find tc egress program")
-	}
-
-	ingressProg, _ := t.bpfModule.GetProgram("tc_ingress")
-	if ingressProg == nil {
-		return fmt.Errorf("Couldn't find tc ingress program")
-	}
-
-	probe := netProbe{
-		iface:     iface,
-		handle:    handle,
-		egressFd:  int(egressProg.GetFd()),
-		ingressFd: int(ingressProg.GetFd()),
-	}
-
-	probe.qdisc = qdisc
-
-	if err = probe.createFilters(); err != nil {
-		return err
-	}
-
-	t.tcProbe = &probe
 
 	for e := range t.eventsToTrace {
 		event, ok := EventsIDToEvent[e]
@@ -1079,7 +1084,6 @@ func (t *Tracee) Run() error {
 	go t.runEventPipeline(done)
 	go t.processFileWrites()
 	go t.processNetEvents()
-	defer t.pcapWriter.Flush()
 	<-sig
 	t.eventsPerfMap.Stop()
 	t.fileWrPerfMap.Stop()
@@ -1639,7 +1643,6 @@ func (t *Tracee) processFileWrites() {
 	}
 }
 
-// todo: rebase on network_flows_to_map
 func (t *Tracee) processNetEvents() {
 	type packet struct {
 		SrcIP     netaddr.IP

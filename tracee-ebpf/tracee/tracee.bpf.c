@@ -1914,9 +1914,6 @@ int syscall__connect(void *ctx)
     if (load_args(&args, delete_args, SYSCALL_CONNECT) != 0)
         return -1;
 
-    if (!event_chosen(RET_CONNECT))
-        return 0;
-
     u64 ret;
     load_retval(&ret, SYSCALL_CONNECT);
 

@@ -274,6 +274,9 @@ Use this flag multiple times to choose multiple capture options
 			capture.Exec = true
 		} else if cap == "mem" {
 			capture.Mem = true
+		} else if strings.HasPrefix(cap, "net=") {
+			iface := strings.TrimPrefix(cap, "net=")
+			capture.NetIfaces = append(capture.NetIfaces, iface)
 		} else if cap == "all" {
 			capture.FileWrite = true
 			capture.Exec = true
