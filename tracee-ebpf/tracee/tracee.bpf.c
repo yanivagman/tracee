@@ -1968,7 +1968,7 @@ int syscall__connect(void *ctx)
             save_to_submit_buf(submit_p, (void *)&remote, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(0, *tags));
             save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(1, *tags));
 
-            if ( net_details.local_address && net_details.local_port ){
+            if (net_details.local_port){
                 // update network map with this new connection
                 local_net_id_t connect_id = {0};
                 connect_id.address.s6_addr32[3] = net_details.local_address;
@@ -2003,7 +2003,7 @@ int syscall__connect(void *ctx)
             save_to_submit_buf(submit_p, (void *)&remote, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(0, *tags));
             save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(1, *tags));
 
-            if ( net_details.local_address.s6_addr && net_details.local_port ){
+            if (net_details.local_port){
                 // update network map with this new connection
                 local_net_id_t connect_id = {0};
                 connect_id.address = net_details.local_address;
@@ -2719,7 +2719,7 @@ int BPF_KPROBE(trace_security_socket_accept)
 
         save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(1, *tags));
 
-        if ( net_details.local_address && net_details.local_port ){
+        if (net_details.local_port){
             // update network map with this new connection
             local_net_id_t connect_id = {0};
             connect_id.address.s6_addr32[3] = net_details.local_address;
@@ -2745,7 +2745,7 @@ int BPF_KPROBE(trace_security_socket_accept)
 
         save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(1, *tags));
 
-        if ( net_details.local_address.s6_addr && net_details.local_port ){
+        if (net_details.local_port){
 
             // update network map with this new connection
             local_net_id_t connect_id = {0};
@@ -2951,16 +2951,18 @@ int BPF_KPROBE(trace_security_socket_recvmsg)
 
         save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(0, *tags));
 
-//        if ( net_details.local_address && net_details.local_port ){
-//            network_to_host_v4(&net_details);
-//            // update network map with this new connection
-//            local_net_id_v4_t connect_id = {};
-//            connect_id.address = net_details.local_address;
-//            connect_id.port = net_details.local_port;
-//            connect_id.protocol = get_sock_protocol(sk);
-//
-//            bpf_map_update_elem(&network_map_v4, &connect_id, &context.host_tid, BPF_ANY);
-//        }
+        // todo: handle the case of address = 0.0.0.0 which is currently not added to the map (because of the below line)
+        if (net_details.local_port){
+            // update network map with this new connection
+            local_net_id_t connect_id = {0};
+            connect_id.address.s6_addr32[3] = net_details.local_address;
+            connect_id.address.s6_addr16[5] = 0xffff;
+            connect_id.port = net_details.local_port;
+            connect_id.protocol = get_sock_protocol(sk);
+
+            if (connect_id.protocol == IPPROTO_UDP)
+                bpf_map_update_elem(&network_map, &connect_id, &context.host_tid, BPF_ANY);
+       }
 
     }
     else if ( family == AF_INET6 ){
@@ -2984,16 +2986,16 @@ int BPF_KPROBE(trace_security_socket_recvmsg)
 
         save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(0, *tags));
 
-//        if ( net_details.local_address.s6_addr && net_details.local_port ){
-//
-//            // update network map with this new connection
-//            local_net_id_v6_t connect_id = {};
-//            connect_id.address = net_details.local_address;
-//            connect_id.port = net_details.local_port;
-//            connect_id.protocol = get_sock_protocol(sk);
-//
-//            bpf_map_update_elem(&network_map_v6, &connect_id, &context.host_tid, BPF_ANY);
-//        }
+        if (net_details.local_port){
+            // update network map with this new connection
+            local_net_id_t connect_id = {0};
+            connect_id.address = net_details.local_address;
+            connect_id.port = net_details.local_port;
+            connect_id.protocol = get_sock_protocol(sk);
+
+            if (connect_id.protocol == IPPROTO_UDP)
+                bpf_map_update_elem(&network_map, &connect_id, &context.host_tid, BPF_ANY);
+        }
     }
 
     events_perf_submit(ctx);
@@ -3606,11 +3608,29 @@ static __always_inline int tc_probe(struct __sk_buff *skb, bool ingress) {
     connect_id.port = pkt.src_port;
     u32 *tid = bpf_map_lookup_elem(&network_map, &connect_id);
     if (tid == NULL) {
-        connect_id.address = pkt.dst_addr;
-        connect_id.port = pkt.dst_port;
+        connect_id.address.s6_addr32[0] = 0;
+        connect_id.address.s6_addr32[1] = 0;
+        connect_id.address.s6_addr32[2] = 0;
+        connect_id.address.s6_addr32[3] = 0;
+        // todo: handle ipv6 (which is just 0)
+        connect_id.address.s6_addr16[5] = 0xffff;
         tid = bpf_map_lookup_elem(&network_map, &connect_id);
         if (tid == NULL) {
-            return TC_ACT_OK;
+            connect_id.address = pkt.dst_addr;
+            connect_id.port = pkt.dst_port;
+            tid = bpf_map_lookup_elem(&network_map, &connect_id);
+            if (tid == NULL) {
+                connect_id.address.s6_addr32[0] = 0;
+                connect_id.address.s6_addr32[1] = 0;
+                connect_id.address.s6_addr32[2] = 0;
+                connect_id.address.s6_addr32[3] = 0;
+                // todo: handle ipv6 (which is just 0)
+                connect_id.address.s6_addr16[5] = 0xffff;
+                tid = bpf_map_lookup_elem(&network_map, &connect_id);
+                if (tid == NULL) {
+                    return TC_ACT_OK;
+                }
+            }
         }
     }
 
