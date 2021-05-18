@@ -163,6 +163,7 @@ const (
 	RetConnectEventID
 	SecuritySocketSendmsgEventID
 	SecuritySocketRecvmsgEventID
+	UdpSendmsgEventID
 	MaxEventID
 )
 
@@ -544,6 +545,7 @@ var EventsIDToEvent = map[int32]EventConfig{
 	RetConnectEventID:            {ID: RetConnectEventID, ID32Bit: sys32undefined, Name: "ret_connect", Probes: []probe{}, Sets: []string{"default"}},
 	SecuritySocketSendmsgEventID: {ID: SecuritySocketSendmsgEventID, ID32Bit: sys32undefined, Name: "security_socket_sendmsg", Probes: []probe{{event: "security_socket_sendmsg", attach: kprobe, fn: "trace_security_socket_sendmsg"}}, Sets: []string{"lsm_hooks"}},
 	SecuritySocketRecvmsgEventID: {ID: SecuritySocketRecvmsgEventID, ID32Bit: sys32undefined, Name: "security_socket_recvmsg", Probes: []probe{{event: "security_socket_recvmsg", attach: kprobe, fn: "trace_security_socket_recvmsg"}}, Sets: []string{"lsm_hooks"}},
+	UdpSendmsgEventID:            {ID: UdpSendmsgEventID, ID32Bit: sys32undefined, Name: "udp_sendmsg", Probes: []probe{{event: "udp_sendmsg", attach: kprobe, fn: "trace_udp_sendmsg"}}, Sets: []string{"lsm_hooks"}},
 }
 
 // EventsIDToParams is list of the parameters (name and type) used by the events
@@ -912,4 +914,5 @@ var EventsIDToParams = map[int32][]external.ArgMeta{
 	RetConnectEventID:            {{Type: "struct sockaddr*", Name: "remote_addr"}, {Type: "struct sockaddr*", Name: "local_addr"}},
 	SecuritySocketSendmsgEventID: {{Type: "struct sockaddr*", Name: "local_addr"}, {Type: "struct sockaddr*", Name: "remote_addr"}},
 	SecuritySocketRecvmsgEventID: {{Type: "struct sockaddr*", Name: "local_addr"}},
+	UdpSendmsgEventID:            {{Type: "struct sockaddr*", Name: "local_addr"}},
 }
