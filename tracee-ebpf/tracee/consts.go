@@ -160,6 +160,8 @@ const (
 	SecuritySocketAcceptEventID
 	SecuritySocketBindEventID
 	RetConnectEventID
+	SecuritySocketSendmsgEventID
+	SecuritySocketRecvmsgEventID
 	MaxEventID
 )
 
@@ -538,6 +540,8 @@ var EventsIDToEvent = map[int32]EventConfig{
 	SecuritySocketAcceptEventID:  {ID: SecuritySocketAcceptEventID, ID32Bit: sys32undefined, Name: "security_socket_accept", Probes: []probe{{event: "security_socket_accept", attach: kprobe, fn: "trace_security_socket_accept"}}, Sets: []string{"lsm_hooks"}},
 	SecuritySocketBindEventID:    {ID: SecuritySocketBindEventID, ID32Bit: sys32undefined, Name: "security_socket_bind", Probes: []probe{{event: "security_socket_bind", attach: kprobe, fn: "trace_security_socket_bind"}}, Sets: []string{"lsm_hooks"}},
 	RetConnectEventID:            {ID: RetConnectEventID, ID32Bit: sys32undefined, Name: "ret_connect", Probes: []probe{}, Sets: []string{"default"}},
+	SecuritySocketSendmsgEventID: {ID: SecuritySocketSendmsgEventID, ID32Bit: sys32undefined, Name: "security_socket_sendmsg", Probes: []probe{{event: "security_socket_sendmsg", attach: kprobe, fn: "trace_security_socket_sendmsg"}}, Sets: []string{"lsm_hooks"}},
+	SecuritySocketRecvmsgEventID: {ID: SecuritySocketRecvmsgEventID, ID32Bit: sys32undefined, Name: "security_socket_recvmsg", Probes: []probe{{event: "security_socket_recvmsg", attach: kprobe, fn: "trace_security_socket_recvmsg"}}, Sets: []string{"lsm_hooks"}},
 }
 
 // EventsIDToParams is list of the parameters (name and type) used by the events
@@ -903,4 +907,6 @@ var EventsIDToParams = map[int32][]external.ArgMeta{
 	SecuritySocketAcceptEventID:  {{Type: "struct sockaddr*", Name: "local_addr"}},
 	SecuritySocketBindEventID:    {{Type: "struct sockaddr*", Name: "local_addr"}},
 	RetConnectEventID:            {{Type: "struct sockaddr*", Name: "remote_addr"}, {Type: "struct sockaddr*", Name: "local_addr"}},
+	SecuritySocketSendmsgEventID: {{Type: "struct sockaddr*", Name: "local_addr"}, {Type: "struct sockaddr*", Name: "remote_addr"}},
+	SecuritySocketRecvmsgEventID: {{Type: "struct sockaddr*", Name: "local_addr"}},
 }

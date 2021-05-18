@@ -376,7 +376,7 @@ func New(cfg Config) (*Tracee, error) {
 	// todo: handle multiple ifaces (like xdpdump: https://github.com/cloudflare/xdpcap/blob/master/cmd/xdpcap/main.go)
 	ngIface := pcapgo.NgInterface{
 		Name:       "test1",
-		Comment:    "tc wlp2s0 iface",
+		Comment:    "tc enp0s3 iface",
 		Filter:     "",
 		LinkType:   layers.LinkTypeEthernet,
 		SnapLength: uint32(math.MaxUint16),
@@ -940,7 +940,7 @@ func (t *Tracee) initBPF(bpfObjectPath string) error {
 	}
 
 	// Todo: let the user choose the interface (using capture net:iface_name)
-	iface, err := netlink.LinkByName("wlp2s0")
+	iface, err := netlink.LinkByName("enp0s3")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s\n", err)
 		os.Exit(1)
@@ -1391,7 +1391,7 @@ func (t *Tracee) prepareArgsForPrint(ctx *context, args map[argTag]interface{}) 
 			s = fmt.Sprintf("{%s}", s)
 			args[t.EncParamName[ctx.EventID%2]["remote_addr"]] = s
 		}
-	case RetConnectEventID:
+	case RetConnectEventID, SecuritySocketSendmsgEventID, SecuritySocketRecvmsgEventID:
 		if sockAddr, isStrMap := args[t.EncParamName[ctx.EventID%2]["remote_addr"]].(map[string]string); isStrMap {
 			var s string
 			for key, val := range sockAddr {
