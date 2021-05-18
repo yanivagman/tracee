@@ -382,6 +382,7 @@ BPF_HASH(sys_32_to_64_map, u32, u32);                   // Map 32bit syscalls nu
 BPF_HASH(params_types_map, u32, u64);                   // Encoded parameters types for event
 BPF_HASH(params_names_map, u32, u64);                   // Encoded parameters names for event
 BPF_HASH(sockfd_map, u32, u32);                         // Persist sockfd from syscalls to be used in the corresponding lsm hooks
+// todo: use LRU hash map
 BPF_HASH(network_map, local_net_id_t, u32);             // network identifier to context
 BPF_ARRAY(file_filter, path_filter_t, 3);               // Used to filter vfs_write events
 BPF_ARRAY(string_store, path_filter_t, 1);              // Store strings from userspace
@@ -2952,7 +2953,6 @@ int BPF_KPROBE(trace_security_socket_recvmsg)
 
         save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(0, *tags));
 
-        // todo: handle the case of address = 0.0.0.0 which is currently not added to the map (because of the below line)
         if (net_details.local_port){
             // update network map with this new connection
             local_net_id_t connect_id = {0};
@@ -3686,7 +3686,6 @@ static __always_inline int tc_probe(struct __sk_buff *skb, bool ingress) {
             return TC_ACT_OK;
         }
 
-        // Todo: not all UDP flows are supported now, as we only trace connect and accept (need to add sendmsg, recvmsg)
         struct udphdr *udp = (void *)head + l4_hdr_off;
 
         pkt.src_port = udp->source;
@@ -3707,6 +3706,7 @@ static __always_inline int tc_probe(struct __sk_buff *skb, bool ingress) {
         connect_id.address.s6_addr32[2] = 0;
         connect_id.address.s6_addr32[3] = 0;
         // todo: handle ipv6 (which is just 0)
+        // todo: handle network namespaces conflicts
         connect_id.address.s6_addr16[5] = 0xffff;
         tid = bpf_map_lookup_elem(&network_map, &connect_id);
         if (tid == NULL) {
