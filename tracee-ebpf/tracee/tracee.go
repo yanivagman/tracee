@@ -1392,7 +1392,7 @@ func (t *Tracee) prepareArgsForPrint(ctx *context, args map[argTag]interface{}) 
 			s = fmt.Sprintf("{%s}", s)
 			args[t.EncParamName[ctx.EventID%2]["addr"]] = s
 		}
-	case SecuritySocketBindEventID, SecuritySocketAcceptEventID, SecuritySocketListenEventID:
+	case SecuritySocketBindEventID, SecuritySocketAcceptEventID, SecuritySocketListenEventID, SecuritySocketRecvmsgEventID, UdpSendmsgEventID:
 		if sockAddr, isStrMap := args[t.EncParamName[ctx.EventID%2]["local_addr"]].(map[string]string); isStrMap {
 			var s string
 			for key, val := range sockAddr {
@@ -1412,7 +1412,7 @@ func (t *Tracee) prepareArgsForPrint(ctx *context, args map[argTag]interface{}) 
 			s = fmt.Sprintf("{%s}", s)
 			args[t.EncParamName[ctx.EventID%2]["remote_addr"]] = s
 		}
-	case RetConnectEventID, SecuritySocketSendmsgEventID, SecuritySocketRecvmsgEventID:
+	case RetConnectEventID, SecuritySocketSendmsgEventID:
 		if sockAddr, isStrMap := args[t.EncParamName[ctx.EventID%2]["remote_addr"]].(map[string]string); isStrMap {
 			var s string
 			for key, val := range sockAddr {
