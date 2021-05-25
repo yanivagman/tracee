@@ -164,6 +164,9 @@ const (
 	SecuritySocketSendmsgEventID
 	SecuritySocketRecvmsgEventID
 	UdpSendmsgEventID
+	UdpDisconnectEventID
+	UdpDestroySockEventID
+	UdpRecvmsgEventID
 	MaxEventID
 )
 
@@ -545,7 +548,10 @@ var EventsIDToEvent = map[int32]EventConfig{
 	RetConnectEventID:            {ID: RetConnectEventID, ID32Bit: sys32undefined, Name: "ret_connect", Probes: []probe{}, Sets: []string{"default"}},
 	SecuritySocketSendmsgEventID: {ID: SecuritySocketSendmsgEventID, ID32Bit: sys32undefined, Name: "security_socket_sendmsg", Probes: []probe{{event: "security_socket_sendmsg", attach: kprobe, fn: "trace_security_socket_sendmsg"}}, Sets: []string{"lsm_hooks"}},
 	SecuritySocketRecvmsgEventID: {ID: SecuritySocketRecvmsgEventID, ID32Bit: sys32undefined, Name: "security_socket_recvmsg", Probes: []probe{{event: "security_socket_recvmsg", attach: kprobe, fn: "trace_security_socket_recvmsg"}}, Sets: []string{"lsm_hooks"}},
-	UdpSendmsgEventID:            {ID: UdpSendmsgEventID, ID32Bit: sys32undefined, Name: "udp_sendmsg", Probes: []probe{{event: "udp_sendmsg", attach: kprobe, fn: "trace_udp_sendmsg"}}, Sets: []string{"lsm_hooks"}},
+	UdpSendmsgEventID:            {ID: UdpSendmsgEventID, ID32Bit: sys32undefined, Name: "udp_sendmsg", Probes: []probe{{event: "udp_sendmsg", attach: kprobe, fn: "trace_udp_sendmsg"}, {event: "udp_sendmsg", attach: kretprobe, fn: "trace_ret_udp_sendmsg"}}, Sets: []string{"lsm_hooks"}},
+	UdpDisconnectEventID:         {ID: UdpDisconnectEventID, ID32Bit: sys32undefined, Name: "udp_disconnect", Probes: []probe{{event: "__udp_disconnect", attach: kprobe, fn: "trace_udp_disconnect"}}, Sets: []string{"udp"}},
+	UdpDestroySockEventID:        {ID: UdpDestroySockEventID, ID32Bit: sys32undefined, Name: "udp_destroy_sock", Probes: []probe{{event: "udp_destroy_sock", attach: kprobe, fn: "trace_udp_destroy_sock"}}, Sets: []string{"udp"}},
+	UdpRecvmsgEventID:            {ID: UdpRecvmsgEventID, ID32Bit: sys32undefined, Name: "udp_recvmsg", Probes: []probe{{event: "udp_recvmsg", attach: kretprobe, fn: "trace_ret_udp_recvmsg"}}, Sets: []string{"lsm_hooks"}},
 }
 
 // EventsIDToParams is list of the parameters (name and type) used by the events
@@ -915,4 +921,7 @@ var EventsIDToParams = map[int32][]external.ArgMeta{
 	SecuritySocketSendmsgEventID: {{Type: "struct sockaddr*", Name: "local_addr"}, {Type: "struct sockaddr*", Name: "remote_addr"}},
 	SecuritySocketRecvmsgEventID: {{Type: "struct sockaddr*", Name: "local_addr"}},
 	UdpSendmsgEventID:            {{Type: "struct sockaddr*", Name: "local_addr"}},
+	UdpDisconnectEventID:         {{Type: "struct sockaddr*", Name: "local_addr"}},
+	UdpDestroySockEventID:        {{Type: "struct sockaddr*", Name: "local_addr"}},
+	UdpRecvmsgEventID:            {{Type: "struct sockaddr*", Name: "local_addr"}},
 }
