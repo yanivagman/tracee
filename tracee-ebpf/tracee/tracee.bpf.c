@@ -177,12 +177,13 @@
 #define UDP_SENDMSG             1023
 #define UDP_DISCONNECT          1024
 #define UDP_DESTROY_SOCK        1025
-#define UDP_RECVMSG             1026
-#define TCP_CLOSE               1027
-#define TCP_DISCONNECT          1028
-#define TCP_V4_DESTROY_SOCK     1029
-#define TCP_ABORT               1030
-#define MAX_EVENT_ID            1031
+#define UDPV6_DESTROY_SOCK      1026
+#define UDP_RECVMSG             1027
+#define TCP_CLOSE               1028
+#define TCP_DISCONNECT          1029
+#define TCP_V4_DESTROY_SOCK     1030
+#define TCP_ABORT               1031
+#define MAX_EVENT_ID            1032
 
 #define CONFIG_SHOW_SYSCALL         1
 #define CONFIG_EXEC_ENV             2
@@ -1985,7 +1986,6 @@ int syscall__connect(void *ctx)
                 connect_id.port = net_details.local_port;
                 connect_id.protocol = get_sock_protocol(sk);
 
-                // Todo: handle removal from this map! (same for all other places in code that add to this map)
                 bpf_map_update_elem(&network_map, &connect_id, &context.host_tid, BPF_ANY);
             }
 
@@ -2960,19 +2960,19 @@ int BPF_KPROBE(trace_security_socket_recvmsg)
 
         save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(0, *tags));
 
-        if (net_details.local_port){
-            // update network map with this new connection
-            local_net_id_t connect_id = {0};
-            connect_id.address.s6_addr32[3] = net_details.local_address;
-            connect_id.address.s6_addr16[5] = 0xffff;
-            connect_id.port = net_details.local_port;
-            connect_id.protocol = get_sock_protocol(sk);
-
-            if (connect_id.protocol == IPPROTO_UDP)
-                bpf_map_update_elem(&network_map, &connect_id, &context.host_tid, BPF_ANY);
-
-            save_retval((u64)sk, SECURITY_SOCKET_RECVMSG);
-       }
+//        if (net_details.local_port){
+//            // update network map with this new connection
+//            local_net_id_t connect_id = {0};
+//            connect_id.address.s6_addr32[3] = net_details.local_address;
+//            connect_id.address.s6_addr16[5] = 0xffff;
+//            connect_id.port = net_details.local_port;
+//            connect_id.protocol = get_sock_protocol(sk);
+//
+//            if (connect_id.protocol == IPPROTO_UDP)
+//                bpf_map_update_elem(&network_map, &connect_id, &context.host_tid, BPF_ANY);
+//
+//            save_retval((u64)sk, SECURITY_SOCKET_RECVMSG);
+//       }
 
     }
     else if ( family == AF_INET6 ){
@@ -2996,26 +2996,26 @@ int BPF_KPROBE(trace_security_socket_recvmsg)
 
         save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(0, *tags));
 
-        if (net_details.local_port){
-            // update network map with this new connection
-            local_net_id_t connect_id = {0};
-            connect_id.address = net_details.local_address;
-            connect_id.port = net_details.local_port;
-            connect_id.protocol = get_sock_protocol(sk);
-
-            if (connect_id.protocol == IPPROTO_UDP)
-                bpf_map_update_elem(&network_map, &connect_id, &context.host_tid, BPF_ANY);
-
-            save_retval((u64)sk, SECURITY_SOCKET_RECVMSG);
-        }
+//        if (net_details.local_port){
+//            // update network map with this new connection
+//            local_net_id_t connect_id = {0};
+//            connect_id.address = net_details.local_address;
+//            connect_id.port = net_details.local_port;
+//            connect_id.protocol = get_sock_protocol(sk);
+//
+//            if (connect_id.protocol == IPPROTO_UDP)
+//                bpf_map_update_elem(&network_map, &connect_id, &context.host_tid, BPF_ANY);
+//
+//            save_retval((u64)sk, SECURITY_SOCKET_RECVMSG);
+//        }
     }
 
     events_perf_submit(ctx);
     return 0;
 };
 
-SEC("kretprobe/udp_recvmsg")
-int BPF_KPROBE(trace_ret_udp_recvmsg)
+SEC("kprobe/udp_recvmsg")
+int BPF_KPROBE(trace_udp_recvmsg)
 {
     if (!should_trace())
         return 0;
@@ -3025,16 +3025,18 @@ int BPF_KPROBE(trace_ret_udp_recvmsg)
         return 0;
     set_buf_off(SUBMIT_BUF_IDX, sizeof(context_t));
 
-    u64 sock_address = 0;
-    struct sock *sk;
+//    u64 sock_address = 0;
+//    struct sock *sk;
+//
+//    load_retval(&sock_address, SECURITY_SOCKET_RECVMSG);
+//    if (sock_address != 0) {
+//        sk = (struct sock*)sock_address;
+//    }
+//    else {
+//        return 0;
+//    }
 
-    load_retval(&sock_address, SECURITY_SOCKET_RECVMSG);
-    if (sock_address != 0) {
-        sk = (struct sock*)sock_address;
-    }
-    else {
-        return 0;
-    }
+    struct sock *sk = (struct sock *)PT_REGS_PARM1(ctx);
 
     context_t context = init_and_save_context(ctx, submit_p, UDP_RECVMSG, 1 /*argnum*/, 0 /*ret*/);
 
@@ -3070,7 +3072,7 @@ int BPF_KPROBE(trace_ret_udp_recvmsg)
             connect_id.port = net_details.local_port;
             connect_id.protocol = get_sock_protocol(sk);
 
-            bpf_map_delete_elem(&network_map, &connect_id);
+            bpf_map_update_elem(&network_map, &connect_id, &context.host_tid, BPF_ANY);
         }
 
     }
@@ -3095,7 +3097,7 @@ int BPF_KPROBE(trace_ret_udp_recvmsg)
             connect_id.port = net_details.local_port;
             connect_id.protocol = get_sock_protocol(sk);
 
-            bpf_map_delete_elem(&network_map, &connect_id);
+            bpf_map_update_elem(&network_map, &connect_id, &context.host_tid, BPF_ANY);
         }
     }
 
@@ -3200,69 +3202,6 @@ int BPF_KPROBE(trace_udp_sendmsg)
     }
 
     events_perf_submit(ctx);
-    return 0;
-};
-
-SEC("kretprobe/udp_sendmsg")
-int BPF_KPROBE(trace_ret_udp_sendmsg)
-{
-    if (!should_trace())
-        return 0;
-
-    args_t saved_args;
-
-    bool delete_args = true;
-    if (load_args(&saved_args, delete_args, UDP_SENDMSG) != 0) {
-        // missed entry or not traced
-        return 0;
-    }
-
-    buf_t *submit_p = get_buf(SUBMIT_BUF_IDX);
-    if (submit_p == NULL)
-        return 0;
-    set_buf_off(SUBMIT_BUF_IDX, sizeof(context_t));
-
-    struct sock *sk = (struct sock *)saved_args.args[0];
-
-    u16 family = get_sock_family(sk);
-    if ( (family != AF_INET) && (family != AF_INET6) ) {
-        return 0;
-    }
-
-    if ( family == AF_INET ){
-
-        net_conn_v4_t net_details = {};
-
-        get_network_details_from_sock_v4(sk, &net_details, 0);
-
-        if (net_details.local_port){
-            // update network map with this new connection
-            local_net_id_t connect_id = {0};
-            connect_id.address.s6_addr32[3] = net_details.local_address;
-            connect_id.address.s6_addr16[5] = 0xffff;
-            connect_id.port = net_details.local_port;
-            connect_id.protocol = get_sock_protocol(sk);
-
-            bpf_map_delete_elem(&network_map, &connect_id);
-        }
-
-    }
-    else if ( family == AF_INET6 ){
-        net_conn_v6_t net_details = {};
-
-        get_network_details_from_sock_v6(sk, &net_details, 0);
-
-        if (net_details.local_port){
-            // update network map with this new connection
-            local_net_id_t connect_id = {0};
-            connect_id.address = net_details.local_address;
-            connect_id.port = net_details.local_port;
-            connect_id.protocol = get_sock_protocol(sk);
-
-            bpf_map_delete_elem(&network_map, &connect_id);
-        }
-    }
-
     return 0;
 };
 
@@ -3394,7 +3333,86 @@ int BPF_KPROBE(trace_udp_destroy_sock)
             connect_id.port = net_details.local_port;
             connect_id.protocol = get_sock_protocol(sk);
 
-            // Todo: handle removal from this map! (same for all other places in code that add to this map)
+            bpf_map_delete_elem(&network_map, &connect_id);
+        }
+
+    }
+    else if ( family == AF_INET6 ){
+        net_conn_v6_t net_details = {};
+
+        get_network_details_from_sock_v6(sk, &net_details, 0);
+
+        struct sockaddr_in6 local;
+        local.sin6_family = family;
+        local.sin6_port = net_details.local_port;
+        local.sin6_flowinfo = net_details.flowinfo;
+        local.sin6_addr = net_details.local_address;
+        local.sin6_scope_id = net_details.scope_id;
+
+        save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(0, *tags));
+
+        if (net_details.local_port){
+            // update network map with this new connection
+            local_net_id_t connect_id = {0};
+            connect_id.address = net_details.local_address;
+            connect_id.port = net_details.local_port;
+            connect_id.protocol = get_sock_protocol(sk);
+
+            bpf_map_delete_elem(&network_map, &connect_id);
+        }
+    }
+
+    events_perf_submit(ctx);
+    return 0;
+};
+
+SEC("kprobe/udpv6_destroy_sock")
+int BPF_KPROBE(trace_udpv6_destroy_sock)
+{
+    if (!should_trace())
+        return 0;
+
+    buf_t *submit_p = get_buf(SUBMIT_BUF_IDX);
+    if (submit_p == NULL)
+        return 0;
+    set_buf_off(SUBMIT_BUF_IDX, sizeof(context_t));
+
+    struct sock *sk = (struct sock *)PT_REGS_PARM1(ctx);
+
+    u16 family = get_sock_family(sk);
+    if ( (family != AF_INET) && (family != AF_INET6) ) {
+        return 0;
+    }
+
+    context_t context = init_and_save_context(ctx, submit_p, UDPV6_DESTROY_SOCK, 1 /*argnum*/, 0 /*ret*/);
+
+    // getting event tags
+    u64 *tags = bpf_map_lookup_elem(&params_names_map, &context.eventid);
+    if (!tags) {
+        return -1;
+    }
+
+    if ( family == AF_INET ){
+
+        net_conn_v4_t net_details = {};
+
+        get_network_details_from_sock_v4(sk, &net_details, 0);
+
+        struct sockaddr_in local;
+        local.sin_family = family;
+        local.sin_port = net_details.local_port;
+        local.sin_addr.s_addr = net_details.local_address;
+
+        save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(0, *tags));
+
+        if (net_details.local_port){
+            // update network map with this new connection
+            local_net_id_t connect_id = {0};
+            connect_id.address.s6_addr32[3] = net_details.local_address;
+            connect_id.address.s6_addr16[5] = 0xffff;
+            connect_id.port = net_details.local_port;
+            connect_id.protocol = get_sock_protocol(sk);
+
             bpf_map_delete_elem(&network_map, &connect_id);
         }
 

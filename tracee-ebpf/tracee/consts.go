@@ -165,7 +165,8 @@ const (
 	SecuritySocketRecvmsgEventID
 	UdpSendmsgEventID
 	UdpDisconnectEventID
-	UdpDestroySockEventID
+	UdpV4DestroySockEventID
+	UdpV6DestroySockEventID
 	UdpRecvmsgEventID
 	TcpCloseEventID
 	TcpDisconnectEventID
@@ -552,10 +553,11 @@ var EventsIDToEvent = map[int32]EventConfig{
 	RetConnectEventID:            {ID: RetConnectEventID, ID32Bit: sys32undefined, Name: "ret_connect", Probes: []probe{}, Sets: []string{"default"}},
 	SecuritySocketSendmsgEventID: {ID: SecuritySocketSendmsgEventID, ID32Bit: sys32undefined, Name: "security_socket_sendmsg", Probes: []probe{{event: "security_socket_sendmsg", attach: kprobe, fn: "trace_security_socket_sendmsg"}}, Sets: []string{"lsm_hooks"}},
 	SecuritySocketRecvmsgEventID: {ID: SecuritySocketRecvmsgEventID, ID32Bit: sys32undefined, Name: "security_socket_recvmsg", Probes: []probe{{event: "security_socket_recvmsg", attach: kprobe, fn: "trace_security_socket_recvmsg"}}, Sets: []string{"lsm_hooks"}},
-	UdpSendmsgEventID:            {ID: UdpSendmsgEventID, ID32Bit: sys32undefined, Name: "udp_sendmsg", Probes: []probe{{event: "udp_sendmsg", attach: kprobe, fn: "trace_udp_sendmsg"}, {event: "udp_sendmsg", attach: kretprobe, fn: "trace_ret_udp_sendmsg"}}, Sets: []string{"lsm_hooks"}},
+	UdpSendmsgEventID:            {ID: UdpSendmsgEventID, ID32Bit: sys32undefined, Name: "udp_sendmsg", Probes: []probe{{event: "udp_sendmsg", attach: kprobe, fn: "trace_udp_sendmsg"}}, Sets: []string{"udp"}},
 	UdpDisconnectEventID:         {ID: UdpDisconnectEventID, ID32Bit: sys32undefined, Name: "udp_disconnect", Probes: []probe{{event: "__udp_disconnect", attach: kprobe, fn: "trace_udp_disconnect"}}, Sets: []string{"udp"}},
-	UdpDestroySockEventID:        {ID: UdpDestroySockEventID, ID32Bit: sys32undefined, Name: "udp_destroy_sock", Probes: []probe{{event: "udp_destroy_sock", attach: kprobe, fn: "trace_udp_destroy_sock"}}, Sets: []string{"udp"}},
-	UdpRecvmsgEventID:            {ID: UdpRecvmsgEventID, ID32Bit: sys32undefined, Name: "udp_recvmsg", Probes: []probe{{event: "udp_recvmsg", attach: kretprobe, fn: "trace_ret_udp_recvmsg"}}, Sets: []string{"udp"}},
+	UdpV4DestroySockEventID:      {ID: UdpV4DestroySockEventID, ID32Bit: sys32undefined, Name: "udp_destroy_sock", Probes: []probe{{event: "udp_destroy_sock", attach: kprobe, fn: "trace_udp_destroy_sock"}}, Sets: []string{"udp"}},
+	UdpV6DestroySockEventID:      {ID: UdpV6DestroySockEventID, ID32Bit: sys32undefined, Name: "udpv6_destroy_sock", Probes: []probe{{event: "udpv6_destroy_sock", attach: kprobe, fn: "trace_udpv6_destroy_sock"}}, Sets: []string{"udp"}},
+	UdpRecvmsgEventID:            {ID: UdpRecvmsgEventID, ID32Bit: sys32undefined, Name: "udp_recvmsg", Probes: []probe{{event: "udp_recvmsg", attach: kprobe, fn: "trace_udp_recvmsg"}}, Sets: []string{"udp"}},
 	TcpCloseEventID:              {ID: TcpCloseEventID, ID32Bit: sys32undefined, Name: "tcp_close", Probes: []probe{{event: "tcp_close", attach: kprobe, fn: "trace_tcp_close"}}, Sets: []string{"tcp"}},
 	TcpDisconnectEventID:         {ID: TcpDisconnectEventID, ID32Bit: sys32undefined, Name: "tcp_disconnect", Probes: []probe{{event: "tcp_disconnect", attach: kprobe, fn: "trace_tcp_disconnect"}}, Sets: []string{"tcp"}},
 	TcpV4DestroySockEventID:      {ID: TcpV4DestroySockEventID, ID32Bit: sys32undefined, Name: "tcp_v4_destroy_sock", Probes: []probe{{event: "tcp_v4_destroy_sock", attach: kprobe, fn: "trace_tcp_v4_destroy_sock"}}, Sets: []string{"tcp"}},
@@ -930,7 +932,8 @@ var EventsIDToParams = map[int32][]external.ArgMeta{
 	SecuritySocketRecvmsgEventID: {{Type: "struct sockaddr*", Name: "local_addr"}},
 	UdpSendmsgEventID:            {{Type: "struct sockaddr*", Name: "local_addr"}},
 	UdpDisconnectEventID:         {{Type: "struct sockaddr*", Name: "local_addr"}},
-	UdpDestroySockEventID:        {{Type: "struct sockaddr*", Name: "local_addr"}},
+	UdpV4DestroySockEventID:      {{Type: "struct sockaddr*", Name: "local_addr"}},
+	UdpV6DestroySockEventID:      {{Type: "struct sockaddr*", Name: "local_addr"}},
 	UdpRecvmsgEventID:            {{Type: "struct sockaddr*", Name: "local_addr"}},
 	TcpCloseEventID:              {{Type: "struct sockaddr*", Name: "local_addr"}},
 	TcpDisconnectEventID:         {{Type: "struct sockaddr*", Name: "local_addr"}},
