@@ -151,38 +151,39 @@
 #define SYSCALL_BIND          200
 #endif
 
-#define RAW_SYS_ENTER           1000
-#define RAW_SYS_EXIT            1001
-#define DO_EXIT                 1002
-#define CAP_CAPABLE             1003
-#define SECURITY_BPRM_CHECK     1004
-#define SECURITY_FILE_OPEN      1005
-#define SECURITY_INODE_UNLINK   1006
-#define VFS_WRITE               1007
-#define VFS_WRITEV              1008
-#define MEM_PROT_ALERT          1009
-#define SCHED_PROCESS_EXIT      1010
-#define COMMIT_CREDS            1011
-#define SWITCH_TASK_NS          1012
-#define MAGIC_WRITE             1013
-#define SECURITY_SOCKET_CREATE  1014
-#define SECURITY_SOCKET_LISTEN  1015
-#define SECURITY_SOCKET_CONNECT 1016
-#define SECURITY_SOCKET_ACCEPT  1017
-#define SECURITY_SOCKET_BIND    1018
-#define SECURITY_SB_MOUNT       1019
-#define RET_CONNECT             1020
-#define SECURITY_SOCKET_SENDMSG 1021
-#define SECURITY_SOCKET_RECVMSG 1022
-#define UDP_SENDMSG             1023
-#define UDP_DISCONNECT          1024
-#define UDP_DESTROY_SOCK        1025
-#define UDPV6_DESTROY_SOCK      1026
-#define TCP_CLOSE               1027
-#define TCP_DISCONNECT          1028
-#define TCP_V4_DESTROY_SOCK     1029
-#define TCP_ABORT               1030
-#define MAX_EVENT_ID            1031
+#define RAW_SYS_ENTER               1000
+#define RAW_SYS_EXIT                1001
+#define DO_EXIT                     1002
+#define CAP_CAPABLE                 1003
+#define SECURITY_BPRM_CHECK         1004
+#define SECURITY_FILE_OPEN          1005
+#define SECURITY_INODE_UNLINK       1006
+#define VFS_WRITE                   1007
+#define VFS_WRITEV                  1008
+#define MEM_PROT_ALERT              1009
+#define SCHED_PROCESS_EXIT          1010
+#define COMMIT_CREDS                1011
+#define SWITCH_TASK_NS              1012
+#define MAGIC_WRITE                 1013
+#define SECURITY_SOCKET_CREATE      1014
+#define SECURITY_SOCKET_LISTEN      1015
+#define SECURITY_SOCKET_CONNECT     1016
+#define SECURITY_SOCKET_ACCEPT      1017
+#define SECURITY_SOCKET_BIND        1018
+#define SECURITY_SB_MOUNT           1019
+#define RET_CONNECT                 1020
+#define SECURITY_SOCKET_SENDMSG     1021
+#define SECURITY_SOCKET_RECVMSG     1022
+#define UDP_SENDMSG                 1023
+#define UDP_DISCONNECT              1024
+#define UDP_DESTROY_SOCK            1025
+#define UDPV6_DESTROY_SOCK          1026
+#define TCP_CLOSE                   1027
+#define TCP_DISCONNECT              1028
+#define TCP_V4_DESTROY_SOCK         1029
+#define TCP_ABORT                   1030
+#define SECURITY_SOCKET_SHUTDOWN    1031
+#define MAX_EVENT_ID                1032
 
 #define CONFIG_SHOW_SYSCALL         1
 #define CONFIG_EXEC_ENV             2
@@ -3036,6 +3037,88 @@ int BPF_KPROBE(trace_security_socket_recvmsg)
 //
 //            save_retval((u64)sk, SECURITY_SOCKET_RECVMSG);
 //        }
+    }
+
+    events_perf_submit(ctx);
+    return 0;
+};
+
+SEC("kprobe/security_socket_shutdown")
+int BPF_KPROBE(trace_security_socket_shutdown)
+{
+    if (!should_trace())
+        return 0;
+
+    buf_t *submit_p = get_buf(SUBMIT_BUF_IDX);
+    if (submit_p == NULL)
+        return 0;
+    set_buf_off(SUBMIT_BUF_IDX, sizeof(context_t));
+
+    struct socket *sock = (struct socket *)PT_REGS_PARM1(ctx);
+    struct sock *sk = get_socket_sock(sock);
+
+    u16 family = get_sock_family(sk);
+    if ( (family != AF_INET) && (family != AF_INET6) ) {
+        return 0;
+    }
+
+    context_t context = init_and_save_context(ctx, submit_p, SECURITY_SOCKET_SHUTDOWN, 1 /*argnum*/, 0 /*ret*/);
+
+    // getting event tags
+    u64 *tags = bpf_map_lookup_elem(&params_names_map, &context.eventid);
+    if (!tags) {
+        return -1;
+    }
+
+    if ( family == AF_INET ){
+
+        net_conn_v4_t net_details = {};
+
+        get_network_details_from_sock_v4(sk, &net_details, 0);
+
+        struct sockaddr_in local;
+        local.sin_family = family;
+        local.sin_port = net_details.local_port;
+        local.sin_addr.s_addr = net_details.local_address;
+
+        save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(0, *tags));
+
+        if (net_details.local_port){
+            // update network map with this new connection
+            local_net_id_t connect_id = {0};
+            connect_id.address.s6_addr32[3] = net_details.local_address;
+            connect_id.address.s6_addr16[5] = 0xffff;
+            connect_id.port = net_details.local_port;
+            connect_id.protocol = get_sock_protocol(sk);
+
+            bpf_map_delete_elem(&network_map, &connect_id);
+        }
+
+    }
+    else if ( family == AF_INET6 ){
+        net_conn_v6_t net_details = {};
+
+        get_network_details_from_sock_v6(sk, &net_details, 0);
+
+        struct sockaddr_in6 local;
+        local.sin6_family = family;
+        local.sin6_port = net_details.local_port;
+        local.sin6_flowinfo = net_details.flowinfo;
+        local.sin6_addr = net_details.local_address;
+        local.sin6_scope_id = net_details.scope_id;
+
+        save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(0, *tags));
+
+        if (net_details.local_port){
+
+            // update network map with this new connection
+            local_net_id_t connect_id = {0};
+            connect_id.address = net_details.local_address;
+            connect_id.port = net_details.local_port;
+            connect_id.protocol = get_sock_protocol(sk);
+
+            bpf_map_delete_elem(&network_map, &connect_id);
+        }
     }
 
     events_perf_submit(ctx);
