@@ -172,6 +172,7 @@ const (
 	TcpV4DestroySockEventID
 	TcpAbortEventID
 	SecuritySocketShutdownEventID
+	InetSockSetStateEventID
 	MaxEventID
 )
 
@@ -562,6 +563,7 @@ var EventsIDToEvent = map[int32]EventConfig{
 	TcpV4DestroySockEventID:       {ID: TcpV4DestroySockEventID, ID32Bit: sys32undefined, Name: "tcp_v4_destroy_sock", Probes: []probe{{event: "tcp_v4_destroy_sock", attach: kprobe, fn: "trace_tcp_v4_destroy_sock"}}, Sets: []string{"tcp"}},
 	TcpAbortEventID:               {ID: TcpAbortEventID, ID32Bit: sys32undefined, Name: "tcp_abort", Probes: []probe{{event: "tcp_abort", attach: kprobe, fn: "trace_tcp_abort"}}, Sets: []string{"tcp"}},
 	SecuritySocketShutdownEventID: {ID: SecuritySocketShutdownEventID, ID32Bit: sys32undefined, Name: "security_socket_shutdown", Probes: []probe{{event: "security_socket_shutdown", attach: kprobe, fn: "trace_security_socket_shutdown"}}, Sets: []string{"lsm_hooks"}},
+	InetSockSetStateEventID:       {ID: InetSockSetStateEventID, ID32Bit: sys32undefined, Name: "inet_sock_set_state", Probes: []probe{{event: "sock:inet_sock_set_state", attach: rawTracepoint, fn: "tracepoint__inet_sock_set_state"}}, EssentialEvent: true, Sets: []string{"tcp"}},
 }
 
 // EventsIDToParams is list of the parameters (name and type) used by the events
@@ -939,4 +941,5 @@ var EventsIDToParams = map[int32][]external.ArgMeta{
 	TcpV4DestroySockEventID:       {{Type: "struct sockaddr*", Name: "local_addr"}},
 	TcpAbortEventID:               {{Type: "struct sockaddr*", Name: "local_addr"}},
 	SecuritySocketShutdownEventID: {{Type: "struct sockaddr*", Name: "local_addr"}},
+	InetSockSetStateEventID:       {{Type: "int", Name: "old_state"}, {Type: "int", Name: "new_state"}, {Type: "struct sockaddr*", Name: "local_addr"}, {Type: "struct sockaddr*", Name: "remote_addr"}},
 }

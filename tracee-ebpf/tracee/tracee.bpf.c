@@ -183,7 +183,8 @@
 #define TCP_V4_DESTROY_SOCK         1029
 #define TCP_ABORT                   1030
 #define SECURITY_SOCKET_SHUTDOWN    1031
-#define MAX_EVENT_ID                1032
+#define INET_SOCK_SET_STATE         1032
+#define MAX_EVENT_ID                1033
 
 #define CONFIG_SHOW_SYSCALL         1
 #define CONFIG_EXEC_ENV             2
@@ -3785,6 +3786,90 @@ int BPF_KPROBE(trace_tcp_abort)
     events_perf_submit(ctx);
     return 0;
 };
+
+SEC("raw_tracepoint/inet_sock_set_state")
+int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
+{
+    if (!should_trace())
+        return 0;
+
+//    struct task_struct *task = (struct task_struct *)bpf_get_current_task();
+
+    // according to: https://elixir.bootlin.com/linux/latest/source/include/trace/events/sock.h#L138
+    struct sock *sk = (struct sock *)ctx->args[0];
+    int old_state = ctx->args[1];
+    int new_state = ctx->args[2];
+
+    u16 family = get_sock_family(sk);
+    if ( (family != AF_INET) && (family != AF_INET6) ) {
+        return 0;
+    }
+
+    buf_t *submit_p = get_buf(SUBMIT_BUF_IDX);
+    if (submit_p == NULL)
+        return 0;
+    set_buf_off(SUBMIT_BUF_IDX, sizeof(context_t));
+
+    context_t context = init_and_save_context(ctx, submit_p, INET_SOCK_SET_STATE, 4 /*argnum*/, 0 /*ret*/);
+
+    // getting event tags
+    u64 *tags = bpf_map_lookup_elem(&params_names_map, &context.eventid);
+    if (!tags) {
+        return -1;
+    }
+
+    save_to_submit_buf(submit_p, (void *)&old_state, sizeof(int), INT_T, DEC_ARG(0, *tags));
+    save_to_submit_buf(submit_p, (void *)&new_state, sizeof(int), INT_T, DEC_ARG(1, *tags));
+
+    if ( family == AF_INET ){
+
+        net_conn_v4_t net_details = {};
+
+        get_network_details_from_sock_v4(sk, &net_details, 0);
+
+        struct sockaddr_in local;
+        local.sin_family = family;
+        local.sin_port = net_details.local_port;
+        local.sin_addr.s_addr = net_details.local_address;
+
+        save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(2, *tags));
+
+        struct sockaddr_in remote;
+        remote.sin_family = family;
+        remote.sin_port = net_details.remote_port;
+        remote.sin_addr.s_addr = net_details.remote_address;
+
+        save_to_submit_buf(submit_p, (void *)&remote, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(3, *tags));
+
+    }
+    else if ( family == AF_INET6 ){
+        net_conn_v6_t net_details = {};
+
+        get_network_details_from_sock_v6(sk, &net_details, 0);
+
+        struct sockaddr_in6 local;
+        local.sin6_family = family;
+        local.sin6_port = net_details.local_port;
+        local.sin6_flowinfo = net_details.flowinfo;
+        local.sin6_addr = net_details.local_address;
+        local.sin6_scope_id = net_details.scope_id;
+
+        save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(2, *tags));
+
+        struct sockaddr_in6 remote;
+        remote.sin6_family = family;
+        remote.sin6_port = net_details.remote_port;
+        remote.sin6_flowinfo = net_details.flowinfo;
+        remote.sin6_addr = net_details.remote_address;
+        remote.sin6_scope_id = net_details.scope_id;
+
+        save_to_submit_buf(submit_p, (void *)&remote, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(3, *tags));
+    }
+
+    events_perf_submit(ctx);
+
+    return 0;
+}
 
 SEC("kprobe/send_bin")
 int BPF_KPROBE(send_bin)
