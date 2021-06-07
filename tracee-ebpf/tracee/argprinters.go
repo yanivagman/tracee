@@ -43,3 +43,28 @@ func PrintAlert(alert alert) string {
 
 	return res
 }
+
+// ParseSocketTcpState parses the ........
+func ParseSocketTcpState(socketState uint32) string {
+	var socketStates = map[uint32]string{
+		1:  "TCP_ESTABLISHED",
+		2:  "TCP_SYN_SENT",
+		3:  "TCP_SYN_RECV",
+		4:  "TCP_FIN_WAIT1",
+		5:  "TCP_FIN_WAIT2",
+		6:  "TCP_TIME_WAIT",
+		7:  "TCP_CLOSE",
+		8:  "TCP_CLOSE_WAIT",
+		9:  "TCP_LAST_ACK",
+		10: "TCP_LISTEN",
+		11: "TCP_CLOSING",
+		12: "TCP_NEW_SYN_RECV",
+	}
+	var res string
+	if socketStateName, ok := socketStates[socketState]; ok {
+		res = socketStateName
+	} else {
+		res = strconv.Itoa(int(socketState))
+	}
+	return res
+}

@@ -1335,31 +1335,6 @@ func (t *Tracee) shouldPrintEvent(e RawEvent) bool {
 	return true
 }
 
-// ParseSocketState parses the ........
-func ParseSocketState(socketState uint32) string {
-	var socketStates = map[uint32]string{
-		1:  "TCP_ESTABLISHED",
-		2:  "TCP_SYN_SENT",
-		3:  "TCP_SYN_RECV",
-		4:  "TCP_FIN_WAIT1",
-		5:  "TCP_FIN_WAIT2",
-		6:  "TCP_TIME_WAIT",
-		7:  "TCP_CLOSE",
-		8:  "TCP_CLOSE_WAIT",
-		9:  "TCP_LAST_ACK",
-		10: "TCP_LISTEN",
-		11: "TCP_CLOSING",
-		12: "TCP_NEW_SYN_RECV",
-	}
-	var res string
-	if socketStateName, ok := socketStates[socketState]; ok {
-		res = socketStateName
-	} else {
-		res = strconv.Itoa(int(socketState))
-	}
-	return res
-}
-
 func (t *Tracee) prepareArgsForPrint(ctx *context, args map[argTag]interface{}) error {
 	for key, arg := range args {
 		if ptr, isUintptr := arg.(uintptr); isUintptr {
@@ -1458,10 +1433,10 @@ func (t *Tracee) prepareArgsForPrint(ctx *context, args map[argTag]interface{}) 
 		}
 	case InetSockSetStateEventID:
 		if dom, isInt32 := args[t.EncParamName[ctx.EventID%2]["old_state"]].(int32); isInt32 {
-			args[t.EncParamName[ctx.EventID%2]["old_state"]] = ParseSocketState(uint32(dom))
+			args[t.EncParamName[ctx.EventID%2]["old_state"]] = ParseSocketTcpState(uint32(dom))
 		}
 		if dom, isInt32 := args[t.EncParamName[ctx.EventID%2]["new_state"]].(int32); isInt32 {
-			args[t.EncParamName[ctx.EventID%2]["new_state"]] = ParseSocketState(uint32(dom))
+			args[t.EncParamName[ctx.EventID%2]["new_state"]] = ParseSocketTcpState(uint32(dom))
 		}
 		if sockAddr, isStrMap := args[t.EncParamName[ctx.EventID%2]["local_addr"]].(map[string]string); isStrMap {
 			var s string
