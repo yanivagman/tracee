@@ -941,5 +941,5 @@ var EventsIDToParams = map[int32][]external.ArgMeta{
 	TcpV4DestroySockEventID:       {{Type: "struct sockaddr*", Name: "local_addr"}},
 	TcpAbortEventID:               {{Type: "struct sockaddr*", Name: "local_addr"}},
 	SecuritySocketShutdownEventID: {{Type: "struct sockaddr*", Name: "local_addr"}},
-	InetSockSetStateEventID:       {{Type: "int", Name: "old_state"}, {Type: "int", Name: "new_state"}, {Type: "struct sockaddr*", Name: "local_addr"}, {Type: "struct sockaddr*", Name: "remote_addr"}},
+	InetSockSetStateEventID:       {{Type: "int", Name: "old_state"}, {Type: "int", Name: "new_state"}, {Type: "struct sockaddr*", Name: "local_addr"}, {Type: "struct sockaddr*", Name: "remote_addr"}, {Type: "int", Name: "old"}, {Type: "int", Name: "new"}, {Type: "int", Name: "pointer_address"}},
 }

@@ -37,13 +37,13 @@
 #include <net/sock.h>
 #include <net/inet_sock.h>
 #include <net/ipv6.h>
+#include <net/tcp_states.h>
 #include <linux/ipv6.h>
 
 #include <uapi/linux/bpf.h>
 #include <linux/kconfig.h>
 #include <linux/version.h>
 
-#define KBUILD_MODNAME "tracee"
 #include <linux/if_ether.h>
 #include <linux/in.h>
 #include <linux/ip.h>
@@ -178,7 +178,7 @@
 #define UDP_DISCONNECT              1024
 #define UDP_DESTROY_SOCK            1025
 #define UDPV6_DESTROY_SOCK          1026
-#define TCP_CLOSE                   1027
+#define TCP_CLOSE_EVENT             1027
 #define TCP_DISCONNECT              1028
 #define TCP_V4_DESTROY_SOCK         1029
 #define TCP_ABORT                   1030
@@ -393,6 +393,7 @@ BPF_HASH(params_names_map, u32, u64);                   // Encoded parameters na
 BPF_HASH(sockfd_map, u32, u32);                         // Persist sockfd from syscalls to be used in the corresponding lsm hooks
 // todo: use LRU hash map
 BPF_HASH(network_map, local_net_id_t, u32);             // network identifier to context
+BPF_HASH(sock_ptr_map, u64, local_net_id_t);            // sock address to network identifier
 BPF_ARRAY(file_filter, path_filter_t, 3);               // Used to filter vfs_write events
 BPF_ARRAY(string_store, path_filter_t, 1);              // Store strings from userspace
 BPF_PERCPU_ARRAY(bufs, buf_t, MAX_BUFFERS);             // Percpu global buffer variables
@@ -648,6 +649,11 @@ static __always_inline u32 get_inet_daddr(struct inet_sock *inet)
 static __always_inline u16 get_inet_sport(struct inet_sock *inet)
 {
     return READ_KERN(inet->inet_sport);
+}
+
+static __always_inline u16 get_inet_num(struct inet_sock *inet)
+{
+    return READ_KERN(inet->inet_num);
 }
 
 static __always_inline u16 get_inet_dport(struct inet_sock *inet)
@@ -1634,6 +1640,13 @@ static __always_inline int get_network_details_from_sock_v4(struct sock *sk, net
         addr = get_inet_saddr(inet);
     }
 
+    net_details->local_address = get_inet_rcv_saddr(inet);
+    net_details->local_port = bpf_ntohs(get_inet_num(inet));
+    net_details->remote_address = get_inet_daddr(inet);
+    net_details->remote_port = get_inet_dport(inet);
+
+    return 0;
+
     if ( peer ) {
 
         net_details->local_address = get_inet_daddr(inet);
@@ -1987,7 +2000,7 @@ int syscall__connect(void *ctx)
                 connect_id.port = net_details.local_port;
                 connect_id.protocol = get_sock_protocol(sk);
 
-                bpf_map_update_elem(&network_map, &connect_id, &context.host_tid, BPF_ANY);
+//                bpf_map_update_elem(&network_map, &connect_id, &context.host_tid, BPF_ANY);
             }
 
         }
@@ -2020,7 +2033,7 @@ int syscall__connect(void *ctx)
                 connect_id.port = net_details.local_port;
                 connect_id.protocol = get_sock_protocol(sk);
 
-                bpf_map_update_elem(&network_map, &connect_id, &context.host_tid, BPF_ANY);
+//                bpf_map_update_elem(&network_map, &connect_id, &context.host_tid, BPF_ANY);
             }
         }
 
@@ -2737,7 +2750,7 @@ int BPF_KPROBE(trace_security_socket_accept)
             connect_id.port = net_details.local_port;
             connect_id.protocol = get_sock_protocol(sk);
 
-            bpf_map_update_elem(&network_map, &connect_id, &context.host_tid, BPF_ANY);
+//            bpf_map_update_elem(&network_map, &connect_id, &context.host_tid, BPF_ANY);
         }
 
     }
@@ -2763,7 +2776,7 @@ int BPF_KPROBE(trace_security_socket_accept)
             connect_id.port = net_details.local_port;
             connect_id.protocol = get_sock_protocol(sk);
 
-            bpf_map_update_elem(&network_map, &connect_id, &context.host_tid, BPF_ANY);
+//            bpf_map_update_elem(&network_map, &connect_id, &context.host_tid, BPF_ANY);
         }
     }
 
@@ -3485,7 +3498,7 @@ int BPF_KPROBE(trace_tcp_close)
         return 0;
     }
 
-    context_t context = init_and_save_context(ctx, submit_p, TCP_CLOSE, 1 /*argnum*/, 0 /*ret*/);
+    context_t context = init_and_save_context(ctx, submit_p, TCP_CLOSE_EVENT, 1 /*argnum*/, 0 /*ret*/);
 
     // getting event tags
     u64 *tags = bpf_map_lookup_elem(&params_names_map, &context.eventid);
@@ -3514,7 +3527,7 @@ int BPF_KPROBE(trace_tcp_close)
             connect_id.port = net_details.local_port;
             connect_id.protocol = get_sock_protocol(sk);
 
-            bpf_map_delete_elem(&network_map, &connect_id);
+//            bpf_map_delete_elem(&network_map, &connect_id);
         }
 
     }
@@ -3539,7 +3552,7 @@ int BPF_KPROBE(trace_tcp_close)
             connect_id.port = net_details.local_port;
             connect_id.protocol = get_sock_protocol(sk);
 
-            bpf_map_delete_elem(&network_map, &connect_id);
+//            bpf_map_delete_elem(&network_map, &connect_id);
         }
     }
 
@@ -3594,7 +3607,7 @@ int BPF_KPROBE(trace_tcp_disconnect)
             connect_id.port = net_details.local_port;
             connect_id.protocol = get_sock_protocol(sk);
 
-            bpf_map_delete_elem(&network_map, &connect_id);
+//            bpf_map_delete_elem(&network_map, &connect_id);
         }
 
     }
@@ -3619,7 +3632,7 @@ int BPF_KPROBE(trace_tcp_disconnect)
             connect_id.port = net_details.local_port;
             connect_id.protocol = get_sock_protocol(sk);
 
-            bpf_map_delete_elem(&network_map, &connect_id);
+//            bpf_map_delete_elem(&network_map, &connect_id);
         }
     }
 
@@ -3674,7 +3687,7 @@ int BPF_KPROBE(trace_tcp_v4_destroy_sock)
             connect_id.port = net_details.local_port;
             connect_id.protocol = get_sock_protocol(sk);
 
-            bpf_map_delete_elem(&network_map, &connect_id);
+//            bpf_map_delete_elem(&network_map, &connect_id);
         }
 
     }
@@ -3699,7 +3712,7 @@ int BPF_KPROBE(trace_tcp_v4_destroy_sock)
             connect_id.port = net_details.local_port;
             connect_id.protocol = get_sock_protocol(sk);
 
-            bpf_map_delete_elem(&network_map, &connect_id);
+//            bpf_map_delete_elem(&network_map, &connect_id);
         }
     }
 
@@ -3754,7 +3767,7 @@ int BPF_KPROBE(trace_tcp_abort)
             connect_id.port = net_details.local_port;
             connect_id.protocol = get_sock_protocol(sk);
 
-            bpf_map_delete_elem(&network_map, &connect_id);
+//            bpf_map_delete_elem(&network_map, &connect_id);
         }
 
     }
@@ -3779,7 +3792,7 @@ int BPF_KPROBE(trace_tcp_abort)
             connect_id.port = net_details.local_port;
             connect_id.protocol = get_sock_protocol(sk);
 
-            bpf_map_delete_elem(&network_map, &connect_id);
+//            bpf_map_delete_elem(&network_map, &connect_id);
         }
     }
 
@@ -3790,15 +3803,29 @@ int BPF_KPROBE(trace_tcp_abort)
 SEC("raw_tracepoint/inet_sock_set_state")
 int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
 {
-    if (!should_trace())
-        return 0;
-
-//    struct task_struct *task = (struct task_struct *)bpf_get_current_task();
-
     // according to: https://elixir.bootlin.com/linux/latest/source/include/trace/events/sock.h#L138
     struct sock *sk = (struct sock *)ctx->args[0];
     int old_state = ctx->args[1];
     int new_state = ctx->args[2];
+
+    u64 pointer_address = (u64)sk;
+
+    // sometime socket state may be changed by other processes that handle the tcp network stack.
+    // so we save the socket pointer in sock_ptr_map, and if this socket changes state than we don't care which process
+    // initiated it.
+    if (new_state == TCP_LISTEN || new_state == TCP_ESTABLISHED || new_state == TCP_CLOSE) {
+        local_net_id_t *value_holder = bpf_map_lookup_elem(&sock_ptr_map, &pointer_address);
+        if (!value_holder) {
+            if (!should_trace()) {
+                return 0;
+            }
+        }
+    }
+    else {
+        if (!should_trace()) {
+            return 0;
+        }
+    }
 
     u16 family = get_sock_family(sk);
     if ( (family != AF_INET) && (family != AF_INET6) ) {
@@ -3810,7 +3837,7 @@ int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
         return 0;
     set_buf_off(SUBMIT_BUF_IDX, sizeof(context_t));
 
-    context_t context = init_and_save_context(ctx, submit_p, INET_SOCK_SET_STATE, 4 /*argnum*/, 0 /*ret*/);
+    context_t context = init_and_save_context(ctx, submit_p, INET_SOCK_SET_STATE, 7 /*argnum*/, 0 /*ret*/);
 
     // getting event tags
     u64 *tags = bpf_map_lookup_elem(&params_names_map, &context.eventid);
@@ -3820,6 +3847,9 @@ int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
 
     save_to_submit_buf(submit_p, (void *)&old_state, sizeof(int), INT_T, DEC_ARG(0, *tags));
     save_to_submit_buf(submit_p, (void *)&new_state, sizeof(int), INT_T, DEC_ARG(1, *tags));
+
+    local_net_id_t connect_id = {0};
+    local_net_id_t *connect_id_ptr;
 
     if ( family == AF_INET ){
 
@@ -3841,6 +3871,44 @@ int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
 
         save_to_submit_buf(submit_p, (void *)&remote, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(3, *tags));
 
+        if (net_details.local_port){
+            // update network map with this new connection
+
+            connect_id.address.s6_addr32[3] = net_details.local_address;
+            connect_id.address.s6_addr16[5] = 0xffff;
+            connect_id.port = net_details.local_port;
+            connect_id.protocol = get_sock_protocol(sk);
+
+            connect_id_ptr = &connect_id;
+
+            // this is where we save the socket address in sock_ptr_map after we have the connect_id filled
+            bpf_map_update_elem(&sock_ptr_map, &pointer_address, connect_id_ptr, BPF_ANY);
+        }
+        else {
+            connect_id_ptr = bpf_map_lookup_elem(&sock_ptr_map, &pointer_address);
+            if (connect_id_ptr == 0) {
+                connect_id_ptr = &connect_id;
+            }
+        }
+
+        // this is where we save the socket address in sock_ptr_map for the first time
+        if (new_state == TCP_LISTEN || new_state == TCP_SYN_SENT || new_state == TCP_SYN_RECV) {
+            bpf_map_update_elem(&sock_ptr_map, &pointer_address, connect_id_ptr, BPF_ANY);
+        }
+
+        if ( READ_KERN(connect_id_ptr->port) ) {
+
+            if (new_state == TCP_LISTEN) {
+                bpf_map_update_elem(&network_map, connect_id_ptr, &context.host_tid, BPF_ANY);
+            }
+            else if (new_state == TCP_ESTABLISHED) {
+                bpf_map_update_elem(&network_map, connect_id_ptr, &context.host_tid, BPF_ANY);
+            }
+            else if (new_state == TCP_CLOSE) {
+                bpf_map_delete_elem(&sock_ptr_map, &pointer_address);
+                bpf_map_delete_elem(&network_map, connect_id_ptr);
+            }
+        }
     }
     else if ( family == AF_INET6 ){
         net_conn_v6_t net_details = {};
@@ -3864,7 +3932,49 @@ int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
         remote.sin6_scope_id = net_details.scope_id;
 
         save_to_submit_buf(submit_p, (void *)&remote, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(3, *tags));
+
+        if (net_details.local_port){
+            // update network map with this new connection
+            local_net_id_t connect_id = {0};
+            connect_id.address = net_details.local_address;
+            connect_id.port = net_details.local_port;
+            connect_id.protocol = get_sock_protocol(sk);
+
+            connect_id_ptr = &connect_id;
+
+            // this is where we save the socket address in sock_ptr_map after we have the connect_id filled
+            bpf_map_update_elem(&sock_ptr_map, &pointer_address, connect_id_ptr, BPF_ANY);
+        }
+        else {
+            connect_id_ptr = bpf_map_lookup_elem(&sock_ptr_map, &pointer_address);
+            if (connect_id_ptr == 0) {
+                connect_id_ptr = &connect_id;
+            }
+        }
+
+        // this is where we save the socket address in sock_ptr_map for the first time
+        if (new_state == TCP_LISTEN || new_state == TCP_SYN_SENT || new_state == TCP_SYN_RECV) {
+            bpf_map_update_elem(&sock_ptr_map, &pointer_address, connect_id_ptr, BPF_ANY);
+        }
+
+        if ( READ_KERN(connect_id_ptr->port) ) {
+
+            if (new_state == TCP_LISTEN) {
+                bpf_map_update_elem(&network_map, connect_id_ptr, &context.host_tid, BPF_ANY);
+            }
+            else if (new_state == TCP_ESTABLISHED) {
+                bpf_map_update_elem(&network_map, connect_id_ptr, &context.host_tid, BPF_ANY);
+            }
+            else if (new_state == TCP_CLOSE) {
+                bpf_map_delete_elem(&sock_ptr_map, &pointer_address);
+                bpf_map_delete_elem(&network_map, connect_id_ptr);
+            }
+        }
     }
+
+    save_to_submit_buf(submit_p, (void *)&old_state, sizeof(int), INT_T, DEC_ARG(4, *tags));
+    save_to_submit_buf(submit_p, (void *)&new_state, sizeof(int), INT_T, DEC_ARG(5, *tags));
+    save_to_submit_buf(submit_p, (void *)&pointer_address, sizeof(int), INT_T, DEC_ARG(6, *tags));
 
     events_perf_submit(ctx);
 
