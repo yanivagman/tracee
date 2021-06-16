@@ -273,7 +273,6 @@ func New(cfg Config) (*Tracee, error) {
 
 	if cfg.Capture.NetIfaces != nil {
 		setEssential(ConnectEventID)
-		setEssential(RetConnectEventID)
 		setEssential(SecuritySocketConnectEventID)
 		setEssential(SecuritySocketAcceptEventID)
 	}
@@ -318,11 +317,6 @@ func New(cfg Config) (*Tracee, error) {
 	if t.eventsToTrace[MagicWriteEventID] {
 		setEssential(VfsWriteEventID)
 		setEssential(VfsWritevEventID)
-	}
-
-	if t.eventsToTrace[RetConnectEventID] {
-		setEssential(ConnectEventID)
-		setEssential(SecuritySocketConnectEventID)
 	}
 
 	// Compile final list of events to trace including essential events
@@ -804,7 +798,7 @@ func (t *Tracee) populateBPFMaps() error {
 	}
 
 	sysEnterTailsBPFMap, _ := t.bpfModule.GetMap("sys_enter_tails")
-	sysExitTailsBPFMap, _ := t.bpfModule.GetMap("sys_exit_tails")
+	//sysExitTailsBPFMap, _ := t.bpfModule.GetMap("sys_exit_tails")
 	paramsTypesBPFMap, _ := t.bpfModule.GetMap("params_types_map")
 	paramsNamesBPFMap, _ := t.bpfModule.GetMap("params_names_map")
 	for e := range t.eventsToTrace {
@@ -832,19 +826,6 @@ func (t *Tracee) populateBPFMaps() error {
 				return fmt.Errorf("error loading BPF program %s: %v", probFnName, err)
 			}
 			sysEnterTailsBPFMap.Update(e, int32(prog.GetFd()))
-		} else if e == ConnectEventID {
-			event, ok := EventsIDToEvent[e]
-			if !ok {
-				continue
-			}
-
-			probFnName := fmt.Sprintf("syscall__%s", event.Name)
-
-			prog, err := t.bpfModule.GetProgram(probFnName)
-			if err != nil {
-				return fmt.Errorf("error loading BPF program %s: %v", probFnName, err)
-			}
-			sysExitTailsBPFMap.Update(e, int32(prog.GetFd()))
 		}
 	}
 
@@ -1412,7 +1393,7 @@ func (t *Tracee) prepareArgsForPrint(ctx *context, args map[argTag]interface{}) 
 			s = fmt.Sprintf("{%s}", s)
 			args[t.EncParamName[ctx.EventID%2]["remote_addr"]] = s
 		}
-	case RetConnectEventID, SecuritySocketSendmsgEventID:
+	case SecuritySocketSendmsgEventID:
 		if sockAddr, isStrMap := args[t.EncParamName[ctx.EventID%2]["remote_addr"]].(map[string]string); isStrMap {
 			var s string
 			for key, val := range sockAddr {
