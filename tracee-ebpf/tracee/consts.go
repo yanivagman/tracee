@@ -160,8 +160,6 @@ const (
 	SecuritySocketAcceptEventID
 	SecuritySocketBindEventID
 	SecuritySbMountEventID
-	SecuritySocketSendmsgEventID
-	SecuritySocketRecvmsgEventID
 	UdpSendmsgEventID
 	UdpDisconnectEventID
 	UdpV4DestroySockEventID
@@ -550,8 +548,6 @@ var EventsIDToEvent = map[int32]EventConfig{
 	SecuritySocketAcceptEventID:   {ID: SecuritySocketAcceptEventID, ID32Bit: sys32undefined, Name: "security_socket_accept", Probes: []probe{{event: "security_socket_accept", attach: kprobe, fn: "trace_security_socket_accept"}}, Sets: []string{"lsm_hooks"}},
 	SecuritySocketBindEventID:     {ID: SecuritySocketBindEventID, ID32Bit: sys32undefined, Name: "security_socket_bind", Probes: []probe{{event: "security_socket_bind", attach: kprobe, fn: "trace_security_socket_bind"}}, Sets: []string{"lsm_hooks"}},
 	SecuritySbMountEventID:        {ID: SecuritySbMountEventID, ID32Bit: sys32undefined, Name: "security_sb_mount", Probes: []probe{{event: "security_sb_mount", attach: kprobe, fn: "trace_security_sb_mount"}}, Sets: []string{"default", "lsm_hooks"}},
-	SecuritySocketSendmsgEventID:  {ID: SecuritySocketSendmsgEventID, ID32Bit: sys32undefined, Name: "security_socket_sendmsg", Probes: []probe{{event: "security_socket_sendmsg", attach: kprobe, fn: "trace_security_socket_sendmsg"}}, Sets: []string{"lsm_hooks"}},
-	SecuritySocketRecvmsgEventID:  {ID: SecuritySocketRecvmsgEventID, ID32Bit: sys32undefined, Name: "security_socket_recvmsg", Probes: []probe{{event: "security_socket_recvmsg", attach: kprobe, fn: "trace_security_socket_recvmsg"}}, Sets: []string{"lsm_hooks"}},
 	UdpSendmsgEventID:             {ID: UdpSendmsgEventID, ID32Bit: sys32undefined, Name: "udp_sendmsg", Probes: []probe{{event: "udp_sendmsg", attach: kprobe, fn: "trace_udp_sendmsg"}}, Sets: []string{"udp"}},
 	UdpDisconnectEventID:          {ID: UdpDisconnectEventID, ID32Bit: sys32undefined, Name: "udp_disconnect", Probes: []probe{{event: "__udp_disconnect", attach: kprobe, fn: "trace_udp_disconnect"}}, Sets: []string{"udp"}},
 	UdpV4DestroySockEventID:       {ID: UdpV4DestroySockEventID, ID32Bit: sys32undefined, Name: "udp_destroy_sock", Probes: []probe{{event: "udp_destroy_sock", attach: kprobe, fn: "trace_udp_destroy_sock"}}, Sets: []string{"udp"}},
@@ -927,8 +923,6 @@ var EventsIDToParams = map[int32][]external.ArgMeta{
 	SecuritySocketAcceptEventID:   {{Type: "int", Name: "sockfd"}, {Type: "struct sockaddr*", Name: "local_addr"}},
 	SecuritySocketBindEventID:     {{Type: "int", Name: "sockfd"}, {Type: "struct sockaddr*", Name: "local_addr"}},
 	SecuritySbMountEventID:        {{Type: "const char*", Name: "dev_name"}, {Type: "const char*", Name: "path"}, {Type: "const char*", Name: "type"}, {Type: "unsigned long", Name: "flags"}},
-	SecuritySocketSendmsgEventID:  {{Type: "struct sockaddr*", Name: "local_addr"}, {Type: "struct sockaddr*", Name: "remote_addr"}},
-	SecuritySocketRecvmsgEventID:  {{Type: "struct sockaddr*", Name: "local_addr"}},
 	UdpSendmsgEventID:             {{Type: "struct sockaddr*", Name: "local_addr"}},
 	UdpDisconnectEventID:          {{Type: "struct sockaddr*", Name: "local_addr"}},
 	UdpV4DestroySockEventID:       {{Type: "struct sockaddr*", Name: "local_addr"}},
