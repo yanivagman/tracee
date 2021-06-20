@@ -1827,16 +1827,13 @@ static __always_inline int get_network_details_from_sock_v6(struct sock *sk, net
     */
     net_details->scope_id = 0;
 
-    if ( peer ) {
-
+    if (peer) {
         net_details->local_address = get_sock_v6_daddr(sk);
         net_details->local_port = get_inet_dport(inet);
         net_details->remote_address = addr;
         net_details->remote_port = get_inet_sport(inet);
-
     }
     else {
-
         net_details->local_address = addr;
         net_details->local_port = get_inet_sport(inet);
         net_details->remote_address = get_sock_v6_daddr(sk);
@@ -1905,6 +1902,31 @@ static __always_inline int get_local_net_id_from_network_details_v6(struct sock 
     return 0;
 }
 
+static __always_inline int remove_sock_from_net_map(struct sock *sk)
+{
+    local_net_id_t connect_id = {0};
+    u16 family = get_sock_family(sk);
+
+    if (family == AF_INET) {
+        net_conn_v4_t net_details = {};
+        get_network_details_from_sock_v4(sk, &net_details, 0);
+
+        if (net_details.local_port){
+            get_local_net_id_from_network_details_v4(sk, &connect_id, &net_details, family);
+            bpf_map_delete_elem(&network_map, &connect_id);
+        }
+    } else if (family == AF_INET6) {
+        net_conn_v6_t net_details = {};
+        get_network_details_from_sock_v6(sk, &net_details, 0);
+
+        if (net_details.local_port){
+            get_local_net_id_from_network_details_v6(sk, &connect_id, &net_details, family);
+            bpf_map_delete_elem(&network_map, &connect_id);
+        }
+    }
+
+    return 0;
+};
 
 /*============================== SYSCALL HOOKS ==============================*/
 
@@ -3111,66 +3133,9 @@ int BPF_KPROBE(trace_udp_disconnect)
     if (!should_trace())
         return 0;
 
-    buf_t *submit_p = get_buf(SUBMIT_BUF_IDX);
-    if (submit_p == NULL)
-        return 0;
-    set_buf_off(SUBMIT_BUF_IDX, sizeof(context_t));
-
     struct sock *sk = (struct sock *)PT_REGS_PARM1(ctx);
 
-    u16 family = get_sock_family(sk);
-    if ( (family != AF_INET) && (family != AF_INET6) ) {
-        return 0;
-    }
-
-    context_t context = init_and_save_context(ctx, submit_p, UDP_DISCONNECT, 1 /*argnum*/, 0 /*ret*/);
-
-    // getting event tags
-    u64 *tags = bpf_map_lookup_elem(&params_names_map, &context.eventid);
-    if (!tags) {
-        return -1;
-    }
-
-    if ( family == AF_INET ){
-
-        net_conn_v4_t net_details = {};
-        get_network_details_from_sock_v4(sk, &net_details, 0);
-
-        struct sockaddr_in local;
-        get_local_sockaddr_in_from_network_details(&local, &net_details, family);
-
-        save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(0, *tags));
-
-        if (net_details.local_port){
-            // update network map with this new connection
-            local_net_id_t connect_id = {0};
-            get_local_net_id_from_network_details_v4(sk, &connect_id, &net_details, family);
-
-            bpf_map_delete_elem(&network_map, &connect_id);
-        }
-
-    }
-    else if ( family == AF_INET6 ){
-
-        net_conn_v6_t net_details = {};
-        get_network_details_from_sock_v6(sk, &net_details, 0);
-
-        struct sockaddr_in6 local;
-        get_local_sockaddr_in6_from_network_details(&local, &net_details, family);
-
-        save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(0, *tags));
-
-        if (net_details.local_port){
-            // update network map with this new connection
-            local_net_id_t connect_id = {0};
-            get_local_net_id_from_network_details_v6(sk, &connect_id, &net_details, family);
-
-            bpf_map_delete_elem(&network_map, &connect_id);
-        }
-    }
-
-    events_perf_submit(ctx);
-    return 0;
+    return remove_sock_from_net_map(sk);
 };
 
 SEC("kprobe/udp_destroy_sock")
@@ -3179,66 +3144,9 @@ int BPF_KPROBE(trace_udp_destroy_sock)
     if (!should_trace())
         return 0;
 
-    buf_t *submit_p = get_buf(SUBMIT_BUF_IDX);
-    if (submit_p == NULL)
-        return 0;
-    set_buf_off(SUBMIT_BUF_IDX, sizeof(context_t));
-
     struct sock *sk = (struct sock *)PT_REGS_PARM1(ctx);
 
-    u16 family = get_sock_family(sk);
-    if ( (family != AF_INET) && (family != AF_INET6) ) {
-        return 0;
-    }
-
-    context_t context = init_and_save_context(ctx, submit_p, UDP_DESTROY_SOCK, 1 /*argnum*/, 0 /*ret*/);
-
-    // getting event tags
-    u64 *tags = bpf_map_lookup_elem(&params_names_map, &context.eventid);
-    if (!tags) {
-        return -1;
-    }
-
-    if ( family == AF_INET ){
-
-        net_conn_v4_t net_details = {};
-        get_network_details_from_sock_v4(sk, &net_details, 0);
-
-        struct sockaddr_in local;
-        get_local_sockaddr_in_from_network_details(&local, &net_details, family);
-
-        save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(0, *tags));
-
-        if (net_details.local_port){
-            // update network map with this new connection
-            local_net_id_t connect_id = {0};
-            get_local_net_id_from_network_details_v4(sk, &connect_id, &net_details, family);
-
-            bpf_map_delete_elem(&network_map, &connect_id);
-        }
-
-    }
-    else if ( family == AF_INET6 ){
-
-        net_conn_v6_t net_details = {};
-        get_network_details_from_sock_v6(sk, &net_details, 0);
-
-        struct sockaddr_in6 local;
-        get_local_sockaddr_in6_from_network_details(&local, &net_details, family);
-
-        save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(0, *tags));
-
-        if (net_details.local_port){
-            // update network map with this new connection
-            local_net_id_t connect_id = {0};
-            get_local_net_id_from_network_details_v6(sk, &connect_id, &net_details, family);
-
-            bpf_map_delete_elem(&network_map, &connect_id);
-        }
-    }
-
-    events_perf_submit(ctx);
-    return 0;
+    return remove_sock_from_net_map(sk);
 };
 
 SEC("kprobe/udpv6_destroy_sock")
@@ -3247,66 +3155,9 @@ int BPF_KPROBE(trace_udpv6_destroy_sock)
     if (!should_trace())
         return 0;
 
-    buf_t *submit_p = get_buf(SUBMIT_BUF_IDX);
-    if (submit_p == NULL)
-        return 0;
-    set_buf_off(SUBMIT_BUF_IDX, sizeof(context_t));
-
     struct sock *sk = (struct sock *)PT_REGS_PARM1(ctx);
 
-    u16 family = get_sock_family(sk);
-    if ( (family != AF_INET) && (family != AF_INET6) ) {
-        return 0;
-    }
-
-    context_t context = init_and_save_context(ctx, submit_p, UDPV6_DESTROY_SOCK, 1 /*argnum*/, 0 /*ret*/);
-
-    // getting event tags
-    u64 *tags = bpf_map_lookup_elem(&params_names_map, &context.eventid);
-    if (!tags) {
-        return -1;
-    }
-
-    if ( family == AF_INET ){
-
-        net_conn_v4_t net_details = {};
-        get_network_details_from_sock_v4(sk, &net_details, 0);
-
-        struct sockaddr_in local;
-        get_local_sockaddr_in_from_network_details(&local, &net_details, family);
-
-        save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(0, *tags));
-
-        if (net_details.local_port){
-            // update network map with this new connection
-            local_net_id_t connect_id = {0};
-            get_local_net_id_from_network_details_v4(sk, &connect_id, &net_details, family);
-
-            bpf_map_delete_elem(&network_map, &connect_id);
-        }
-
-    }
-    else if ( family == AF_INET6 ){
-
-        net_conn_v6_t net_details = {};
-        get_network_details_from_sock_v6(sk, &net_details, 0);
-
-        struct sockaddr_in6 local;
-        get_local_sockaddr_in6_from_network_details(&local, &net_details, family);
-
-        save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(0, *tags));
-
-        if (net_details.local_port){
-            // update network map with this new connection
-            local_net_id_t connect_id = {0};
-            get_local_net_id_from_network_details_v6(sk, &connect_id, &net_details, family);
-
-            bpf_map_delete_elem(&network_map, &connect_id);
-        }
-    }
-
-    events_perf_submit(ctx);
-    return 0;
+    return remove_sock_from_net_map(sk);
 };
 
 SEC("raw_tracepoint/inet_sock_set_state")
