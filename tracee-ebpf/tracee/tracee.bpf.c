@@ -284,6 +284,9 @@ struct bpf_map_def SEC("maps") _name = { \
 #define BPF_HASH(_name, _key_type, _value_type) \
 BPF_MAP(_name, BPF_MAP_TYPE_HASH, _key_type, _value_type, 10240);
 
+#define BPF_LRU_HASH(_name, _key_type, _value_type) \
+BPF_MAP(_name, BPF_MAP_TYPE_LRU_HASH, _key_type, _value_type, 10240);
+
 #define BPF_ARRAY(_name, _value_type, _max_entries) \
 BPF_MAP(_name, BPF_MAP_TYPE_ARRAY, u32, _value_type, _max_entries);
 
@@ -461,9 +464,8 @@ BPF_HASH(sys_32_to_64_map, u32, u32);                   // Map 32bit syscalls nu
 BPF_HASH(params_types_map, u32, u64);                   // Encoded parameters types for event
 BPF_HASH(params_names_map, u32, u64);                   // Encoded parameters names for event
 BPF_HASH(sockfd_map, u32, u32);                         // Persist sockfd from syscalls to be used in the corresponding lsm hooks
-// todo: use LRU hash map
-BPF_HASH(network_map, local_net_id_t, u32);             // network identifier to context
 BPF_HASH(sock_ptr_map, u64, local_net_id_t);            // sock address to network identifier
+BPF_LRU_HASH(network_map, local_net_id_t, u32);         // network identifier to context
 BPF_ARRAY(file_filter, path_filter_t, 3);               // Used to filter vfs_write events
 BPF_ARRAY(string_store, path_filter_t, 1);              // Store strings from userspace
 BPF_PERCPU_ARRAY(bufs, buf_t, MAX_BUFFERS);             // Percpu global buffer variables
