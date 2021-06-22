@@ -3104,6 +3104,9 @@ int BPF_KPROBE(trace_udpv6_destroy_sock)
 SEC("raw_tracepoint/inet_sock_set_state")
 int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
 {
+    local_net_id_t connect_id = {0};
+    local_net_id_t *connect_id_p;
+
     // according to: https://elixir.bootlin.com/linux/latest/source/include/trace/events/sock.h#L138
     struct sock *sk = (struct sock *)ctx->args[0];
     int old_state = ctx->args[1];
@@ -3114,151 +3117,89 @@ int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
     // sometime socket state may be changed by other processes that handle the tcp network stack.
     // so we save the socket pointer in sock_ptr_map, and if this socket changes state than we don't care which process
     // initiated it.
-    if (new_state == TCP_LISTEN || new_state == TCP_ESTABLISHED || new_state == TCP_CLOSE) {
-        local_net_id_t *value_holder = bpf_map_lookup_elem(&sock_ptr_map, &pointer_address);
-        if (!value_holder) {
-            if (!should_trace()) {
-                return 0;
-            }
-        }
-    }
-    else {
+    connect_id_p = bpf_map_lookup_elem(&sock_ptr_map, &pointer_address);
+    if (!connect_id_p) {
         if (!should_trace()) {
             return 0;
         }
     }
 
     u16 family = get_sock_family(sk);
-    if ( (family != AF_INET) && (family != AF_INET6) ) {
-        return 0;
-    }
 
-    buf_t *submit_p = get_buf(SUBMIT_BUF_IDX);
-    if (submit_p == NULL)
-        return 0;
-    set_buf_off(SUBMIT_BUF_IDX, sizeof(context_t));
+    // buf_t *submit_p = get_buf(SUBMIT_BUF_IDX);
+    // if (submit_p == NULL)
+    //     return 0;
+    // set_buf_off(SUBMIT_BUF_IDX, sizeof(context_t));
 
-    context_t context = init_and_save_context(ctx, submit_p, INET_SOCK_SET_STATE, 7 /*argnum*/, 0 /*ret*/);
+    // context_t context = init_and_save_context(ctx, submit_p, INET_SOCK_SET_STATE, 7 /*argnum*/, 0 /*ret*/);
 
-    // getting event tags
-    u64 *tags = bpf_map_lookup_elem(&params_names_map, &context.eventid);
-    if (!tags) {
-        return -1;
-    }
+    // // getting event tags
+    // u64 *tags = bpf_map_lookup_elem(&params_names_map, &context.eventid);
+    // if (!tags) {
+    //     return -1;
+    // }
 
-    save_to_submit_buf(submit_p, (void *)&old_state, sizeof(int), INT_T, DEC_ARG(0, *tags));
-    save_to_submit_buf(submit_p, (void *)&new_state, sizeof(int), INT_T, DEC_ARG(1, *tags));
+    // save_to_submit_buf(submit_p, (void *)&old_state, sizeof(int), INT_T, DEC_ARG(0, *tags));
+    // save_to_submit_buf(submit_p, (void *)&new_state, sizeof(int), INT_T, DEC_ARG(1, *tags));
 
-    local_net_id_t connect_id = {0};
-    local_net_id_t *connect_id_ptr;
-
-    if ( family == AF_INET ){
-
+    if (family == AF_INET) {
         net_conn_v4_t net_details = {};
         get_network_details_from_sock_v4(sk, &net_details, 0);
 
-        struct sockaddr_in local;
-        get_local_sockaddr_in_from_network_details(&local, &net_details, family);
+        //struct sockaddr_in local;
+        //get_local_sockaddr_in_from_network_details(&local, &net_details, family);
 
-        save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(2, *tags));
+        //save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(2, *tags));
 
-        struct sockaddr_in remote;
-        get_remote_sockaddr_in_from_network_details(&remote, &net_details, family);
+        //struct sockaddr_in remote;
+        //get_remote_sockaddr_in_from_network_details(&remote, &net_details, family);
 
-        save_to_submit_buf(submit_p, (void *)&remote, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(3, *tags));
+        //save_to_submit_buf(submit_p, (void *)&remote, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(3, *tags));
 
-        if (net_details.local_port){
-            // update network map with this new connection
-
-            get_local_net_id_from_network_details_v4(sk, &connect_id, &net_details, family);
-
-            connect_id_ptr = &connect_id;
-
-            // this is where we save the socket address in sock_ptr_map after we have the connect_id filled
-            bpf_map_update_elem(&sock_ptr_map, &pointer_address, connect_id_ptr, BPF_ANY);
-        }
-        else {
-            connect_id_ptr = bpf_map_lookup_elem(&sock_ptr_map, &pointer_address);
-            if (connect_id_ptr == 0) {
-                connect_id_ptr = &connect_id;
-            }
-        }
-
-        // this is where we save the socket address in sock_ptr_map for the first time
-        if (new_state == TCP_LISTEN || new_state == TCP_SYN_SENT || new_state == TCP_SYN_RECV) {
-            bpf_map_update_elem(&sock_ptr_map, &pointer_address, connect_id_ptr, BPF_ANY);
-        }
-
-        if ( READ_KERN(connect_id_ptr->port) ) {
-
-            if (new_state == TCP_LISTEN) {
-                bpf_map_update_elem(&network_map, connect_id_ptr, &context.host_tid, BPF_ANY);
-            }
-            else if (new_state == TCP_ESTABLISHED) {
-                bpf_map_update_elem(&network_map, connect_id_ptr, &context.host_tid, BPF_ANY);
-            }
-            else if (new_state == TCP_CLOSE) {
-                bpf_map_delete_elem(&sock_ptr_map, &pointer_address);
-                bpf_map_delete_elem(&network_map, connect_id_ptr);
-            }
-        }
-    }
-    else if ( family == AF_INET6 ){
-
+        get_local_net_id_from_network_details_v4(sk, &connect_id, &net_details, family);
+    } else if (family == AF_INET6) {
         net_conn_v6_t net_details = {};
         get_network_details_from_sock_v6(sk, &net_details, 0);
 
-        struct sockaddr_in6 local;
-        get_local_sockaddr_in6_from_network_details(&local, &net_details, family);
+        //struct sockaddr_in6 local;
+        //get_local_sockaddr_in6_from_network_details(&local, &net_details, family);
 
-        save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(2, *tags));
+        //save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(2, *tags));
 
-        struct sockaddr_in6 remote;
-        get_remote_sockaddr_in6_from_network_details(&remote, &net_details, family);
+        //struct sockaddr_in6 remote;
+        //get_remote_sockaddr_in6_from_network_details(&remote, &net_details, family);
 
-        save_to_submit_buf(submit_p, (void *)&remote, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(3, *tags));
+        //save_to_submit_buf(submit_p, (void *)&remote, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(3, *tags));
 
-        if (net_details.local_port){
-            // update network map with this new connection
-            get_local_net_id_from_network_details_v6(sk, &connect_id, &net_details, family);
-
-            connect_id_ptr = &connect_id;
-
-            // this is where we save the socket address in sock_ptr_map after we have the connect_id filled
-            bpf_map_update_elem(&sock_ptr_map, &pointer_address, connect_id_ptr, BPF_ANY);
-        }
-        else {
-            connect_id_ptr = bpf_map_lookup_elem(&sock_ptr_map, &pointer_address);
-            if (connect_id_ptr == 0) {
-                connect_id_ptr = &connect_id;
-            }
-        }
-
-        // this is where we save the socket address in sock_ptr_map for the first time
-        if (new_state == TCP_LISTEN || new_state == TCP_SYN_SENT || new_state == TCP_SYN_RECV) {
-            bpf_map_update_elem(&sock_ptr_map, &pointer_address, connect_id_ptr, BPF_ANY);
-        }
-
-        if ( READ_KERN(connect_id_ptr->port) ) {
-
-            if (new_state == TCP_LISTEN) {
-                bpf_map_update_elem(&network_map, connect_id_ptr, &context.host_tid, BPF_ANY);
-            }
-            else if (new_state == TCP_ESTABLISHED) {
-                bpf_map_update_elem(&network_map, connect_id_ptr, &context.host_tid, BPF_ANY);
-            }
-            else if (new_state == TCP_CLOSE) {
-                bpf_map_delete_elem(&sock_ptr_map, &pointer_address);
-                bpf_map_delete_elem(&network_map, connect_id_ptr);
-            }
-        }
+        get_local_net_id_from_network_details_v6(sk, &connect_id, &net_details, family);
+    } else {
+        return 0;
     }
 
-    save_to_submit_buf(submit_p, (void *)&old_state, sizeof(int), INT_T, DEC_ARG(4, *tags));
-    save_to_submit_buf(submit_p, (void *)&new_state, sizeof(int), INT_T, DEC_ARG(5, *tags));
-    save_to_submit_buf(submit_p, (void *)&pointer_address, sizeof(int), INT_T, DEC_ARG(6, *tags));
+    if (connect_id.port || connect_id_p == 0) {
+        connect_id_p = &connect_id;
+    }
 
-    events_perf_submit(ctx);
+    // this is where we save the socket address in sock_ptr_map for the first time
+    if (new_state == TCP_LISTEN || new_state == TCP_SYN_SENT || new_state == TCP_SYN_RECV) {
+        bpf_map_update_elem(&sock_ptr_map, &pointer_address, connect_id_p, BPF_ANY);
+    }
+
+    if ( READ_KERN(connect_id_p->port) ) {
+        if (new_state == TCP_ESTABLISHED) {
+            u32 tid = bpf_get_current_pid_tgid();
+            bpf_map_update_elem(&network_map, connect_id_p, &tid, BPF_ANY);
+        }
+        else if (new_state == TCP_CLOSE) {
+            bpf_map_delete_elem(&sock_ptr_map, &pointer_address);
+            bpf_map_delete_elem(&network_map, connect_id_p);
+        }
+    }
+    // save_to_submit_buf(submit_p, (void *)&old_state, sizeof(int), INT_T, DEC_ARG(4, *tags));
+    // save_to_submit_buf(submit_p, (void *)&new_state, sizeof(int), INT_T, DEC_ARG(5, *tags));
+    // save_to_submit_buf(submit_p, (void *)&pointer_address, sizeof(int), INT_T, DEC_ARG(6, *tags));
+
+    // events_perf_submit(ctx);
 
     return 0;
 }
