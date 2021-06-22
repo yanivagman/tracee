@@ -3126,50 +3126,50 @@ int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
 
     u16 family = get_sock_family(sk);
 
-    // buf_t *submit_p = get_buf(SUBMIT_BUF_IDX);
-    // if (submit_p == NULL)
-    //     return 0;
-    // set_buf_off(SUBMIT_BUF_IDX, sizeof(context_t));
-
-    // context_t context = init_and_save_context(ctx, submit_p, INET_SOCK_SET_STATE, 7 /*argnum*/, 0 /*ret*/);
-
-    // // getting event tags
-    // u64 *tags = bpf_map_lookup_elem(&params_names_map, &context.eventid);
-    // if (!tags) {
-    //     return -1;
-    // }
-
-    // save_to_submit_buf(submit_p, (void *)&old_state, sizeof(int), INT_T, DEC_ARG(0, *tags));
-    // save_to_submit_buf(submit_p, (void *)&new_state, sizeof(int), INT_T, DEC_ARG(1, *tags));
+//    buf_t *submit_p = get_buf(SUBMIT_BUF_IDX);
+//    if (submit_p == NULL)
+//        return 0;
+//    set_buf_off(SUBMIT_BUF_IDX, sizeof(context_t));
+//
+//    context_t context = init_and_save_context(ctx, submit_p, INET_SOCK_SET_STATE, 7 /*argnum*/, 0 /*ret*/);
+//
+//    // getting event tags
+//    u64 *tags = bpf_map_lookup_elem(&params_names_map, &context.eventid);
+//    if (!tags) {
+//        return -1;
+//    }
+//
+//    save_to_submit_buf(submit_p, (void *)&old_state, sizeof(int), INT_T, DEC_ARG(0, *tags));
+//    save_to_submit_buf(submit_p, (void *)&new_state, sizeof(int), INT_T, DEC_ARG(1, *tags));
 
     if (family == AF_INET) {
         net_conn_v4_t net_details = {};
         get_network_details_from_sock_v4(sk, &net_details, 0);
 
-        //struct sockaddr_in local;
-        //get_local_sockaddr_in_from_network_details(&local, &net_details, family);
-
-        //save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(2, *tags));
-
-        //struct sockaddr_in remote;
-        //get_remote_sockaddr_in_from_network_details(&remote, &net_details, family);
-
-        //save_to_submit_buf(submit_p, (void *)&remote, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(3, *tags));
+//        struct sockaddr_in local;
+//        get_local_sockaddr_in_from_network_details(&local, &net_details, family);
+//
+//        save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(2, *tags));
+//
+//        struct sockaddr_in remote;
+//        get_remote_sockaddr_in_from_network_details(&remote, &net_details, family);
+//
+//        save_to_submit_buf(submit_p, (void *)&remote, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(3, *tags));
 
         get_local_net_id_from_network_details_v4(sk, &connect_id, &net_details, family);
     } else if (family == AF_INET6) {
         net_conn_v6_t net_details = {};
         get_network_details_from_sock_v6(sk, &net_details, 0);
 
-        //struct sockaddr_in6 local;
-        //get_local_sockaddr_in6_from_network_details(&local, &net_details, family);
-
-        //save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(2, *tags));
-
-        //struct sockaddr_in6 remote;
-        //get_remote_sockaddr_in6_from_network_details(&remote, &net_details, family);
-
-        //save_to_submit_buf(submit_p, (void *)&remote, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(3, *tags));
+//        struct sockaddr_in6 local;
+//        get_local_sockaddr_in6_from_network_details(&local, &net_details, family);
+//
+//        save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(2, *tags));
+//
+//        struct sockaddr_in6 remote;
+//        get_remote_sockaddr_in6_from_network_details(&remote, &net_details, family);
+//
+//        save_to_submit_buf(submit_p, (void *)&remote, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(3, *tags));
 
         get_local_net_id_from_network_details_v6(sk, &connect_id, &net_details, family);
     } else {
@@ -3180,13 +3180,18 @@ int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
         connect_id_p = &connect_id;
     }
 
-    // this is where we save the socket address in sock_ptr_map for the first time
-    if (new_state == TCP_LISTEN || new_state == TCP_SYN_SENT || new_state == TCP_SYN_RECV) {
+    // this is where we save the socket address in sock_ptr_map for the first time - for client path.
+    // we save it here because when we have outgoing network to remote host - we get 'TCP_ESTABLISHED' with context
+    // different from the 'TCP_SYN_SENT' context.
+    if (new_state == TCP_SYN_SENT) {
         bpf_map_update_elem(&sock_ptr_map, &pointer_address, connect_id_p, BPF_ANY);
     }
 
-    if ( READ_KERN(connect_id_p->port) ) {
-        if (new_state == TCP_ESTABLISHED) {
+    if (connect_id_p->port) {
+        // we update the network_map for 'TCP_LISTEN' because in the case of local server program and local client program, which talk via the 'lo' interface.
+        // in this case, when we look at the server, we won't see 'TCP_ESTABLISHED'.
+        if (new_state == TCP_LISTEN || new_state == TCP_ESTABLISHED) {
+            bpf_map_update_elem(&sock_ptr_map, &pointer_address, connect_id_p, BPF_ANY);
             u32 tid = bpf_get_current_pid_tgid();
             bpf_map_update_elem(&network_map, connect_id_p, &tid, BPF_ANY);
         }
@@ -3195,11 +3200,11 @@ int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
             bpf_map_delete_elem(&network_map, connect_id_p);
         }
     }
-    // save_to_submit_buf(submit_p, (void *)&old_state, sizeof(int), INT_T, DEC_ARG(4, *tags));
-    // save_to_submit_buf(submit_p, (void *)&new_state, sizeof(int), INT_T, DEC_ARG(5, *tags));
-    // save_to_submit_buf(submit_p, (void *)&pointer_address, sizeof(int), INT_T, DEC_ARG(6, *tags));
-
-    // events_perf_submit(ctx);
+//     save_to_submit_buf(submit_p, (void *)&old_state, sizeof(int), INT_T, DEC_ARG(4, *tags));
+//     save_to_submit_buf(submit_p, (void *)&new_state, sizeof(int), INT_T, DEC_ARG(5, *tags));
+//     save_to_submit_buf(submit_p, (void *)&pointer_address, sizeof(int), INT_T, DEC_ARG(6, *tags));
+//
+//     events_perf_submit(ctx);
 
     return 0;
 }
