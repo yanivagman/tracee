@@ -846,6 +846,20 @@ static __always_inline int get_sock_bound_dev_if(struct sock *sock)
     return READ_KERN(sock->sk_bound_dev_if);
 }
 
+static __always_inline volatile unsigned char get_sock_state(struct sock *sock)
+{
+    volatile unsigned char sk_state_own_impl;
+    bpf_probe_read((void *)&sk_state_own_impl, sizeof(sk_state_own_impl), (const void *)&sock->sk_state);
+    return sk_state_own_impl;
+}
+
+static __always_inline struct ipv6_pinfo* get_inet_pinet6(struct inet_sock *inet)
+{
+    struct ipv6_pinfo *pinet6_own_impl;
+    bpf_probe_read(&pinet6_own_impl, sizeof(pinet6_own_impl), &inet->pinet6);
+    return pinet6_own_impl;
+}
+
 /*============================== HELPER FUNCTIONS ==============================*/
 
 static __inline int has_prefix(char *prefix, char *str, int n)
@@ -1780,15 +1794,13 @@ static __always_inline int get_network_details_from_sock_v4(struct sock *sk, net
     return 0;
 }
 
-static __always_inline struct ipv6_pinfo *inet6_sk_own_impl(const struct sock *__sk, struct inet_sock *inet)
+static __always_inline struct ipv6_pinfo *inet6_sk_own_impl(struct sock *__sk, struct inet_sock *inet)
 {
     volatile unsigned char sk_state_own_impl;
-    bpf_probe_read((void *)&sk_state_own_impl, sizeof(sk_state_own_impl), (const void *)&__sk->sk_state);
-//    sk_state_own_impl = (void *)get_sock_state(__sk);
+    sk_state_own_impl = get_sock_state(__sk);
 
     struct ipv6_pinfo *pinet6_own_impl;
-    bpf_probe_read(&pinet6_own_impl, sizeof(pinet6_own_impl), &inet->pinet6);
-//    pinet6_own_impl = get_inet_pinet6(inet);
+    pinet6_own_impl = get_inet_pinet6(inet);
 
     bool sk_fullsock = (1 << sk_state_own_impl) & ~(TCPF_TIME_WAIT | TCPF_NEW_SYN_RECV);
     return sk_fullsock ? pinet6_own_impl : NULL;
@@ -3116,8 +3128,6 @@ int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
         }
     }
 
-    u16 family = get_sock_family(sk);
-
 //    buf_t *submit_p = get_buf(SUBMIT_BUF_IDX);
 //    if (submit_p == NULL)
 //        return 0;
@@ -3133,6 +3143,8 @@ int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
 //
 //    save_to_submit_buf(submit_p, (void *)&old_state, sizeof(int), INT_T, DEC_ARG(0, *tags));
 //    save_to_submit_buf(submit_p, (void *)&new_state, sizeof(int), INT_T, DEC_ARG(1, *tags));
+
+    u16 family = get_sock_family(sk);
 
     if (family == AF_INET) {
         net_conn_v4_t net_details = {};
