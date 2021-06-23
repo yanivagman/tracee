@@ -3796,11 +3796,14 @@ static __always_inline int tc_probe(struct __sk_buff *skb, bool ingress) {
 
     struct ethhdr *eth = (void *)head;
     struct packet_t pkt = {0};
+    pkt.ts = bpf_ktime_get_ns();
     local_net_id_t connect_id = {0};
 
     uint32_t l4_hdr_off;
 
-    switch (bpf_ntohs(eth->h_proto)) {
+    u16 eth_protocol = bpf_ntohs(eth->h_proto);
+
+    switch (eth_protocol) {
     case ETH_P_IP:
         l4_hdr_off = sizeof(struct ethhdr) + sizeof(struct iphdr);
 
@@ -3818,7 +3821,6 @@ static __always_inline int tc_probe(struct __sk_buff *skb, bool ingress) {
         pkt.dst_addr.s6_addr16[5] = 0xffff;
 
         pkt.protocol = ip->protocol;
-        pkt.ts = bpf_ktime_get_ns();
 
         break;
     case ETH_P_IPV6:
@@ -3834,7 +3836,6 @@ static __always_inline int tc_probe(struct __sk_buff *skb, bool ingress) {
         pkt.dst_addr = ip6->daddr;
 
         pkt.protocol = ip6->nexthdr;
-        pkt.ts = bpf_ktime_get_ns();
 
         break;
     default:
@@ -3870,25 +3871,22 @@ static __always_inline int tc_probe(struct __sk_buff *skb, bool ingress) {
     connect_id.port = pkt.src_port;
     u32 *tid = bpf_map_lookup_elem(&network_map, &connect_id);
     if (tid == NULL) {
-        connect_id.address.s6_addr32[0] = 0;
-        connect_id.address.s6_addr32[1] = 0;
-        connect_id.address.s6_addr32[2] = 0;
-        connect_id.address.s6_addr32[3] = 0;
-        // todo: handle ipv6 (which is just 0)
-        // todo: handle network namespaces conflicts
-        connect_id.address.s6_addr16[5] = 0xffff;
+        // We could have used traffic direction (ingress bool) to know if we should look for src or dst
+        // however, if we attach to a bridge interface, src and dst are switched
+        // For this reason, we look in the network map for both src and dst
+        connect_id.address = pkt.dst_addr;
+        connect_id.port = pkt.dst_port;
         tid = bpf_map_lookup_elem(&network_map, &connect_id);
         if (tid == NULL) {
-            connect_id.address = pkt.dst_addr;
-            connect_id.port = pkt.dst_port;
+            // Check if network_map has an ip of 0.0.0.0
+            // Note: A conflict might occur between processes in different namespace that bind to 0.0.0.0
+            // todo: handle network namespaces conflicts
+            __builtin_memset(connect_id.address.s6_addr, 0, sizeof(connect_id.address.s6_addr));
+            if (eth_protocol == ETH_P_IP)
+                connect_id.address.s6_addr16[5] = 0xffff;
             tid = bpf_map_lookup_elem(&network_map, &connect_id);
             if (tid == NULL) {
-                connect_id.address.s6_addr32[0] = 0;
-                connect_id.address.s6_addr32[1] = 0;
-                connect_id.address.s6_addr32[2] = 0;
-                connect_id.address.s6_addr32[3] = 0;
-                // todo: handle ipv6 (which is just 0)
-                connect_id.address.s6_addr16[5] = 0xffff;
+                connect_id.port = pkt.src_port;
                 tid = bpf_map_lookup_elem(&network_map, &connect_id);
                 if (tid == NULL) {
                     return TC_ACT_OK;
