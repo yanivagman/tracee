@@ -2980,9 +2980,6 @@ int BPF_KPROBE(trace_security_socket_accept)
 SEC("kprobe/security_socket_bind")
 int BPF_KPROBE(trace_security_socket_bind)
 {
-
-    // trace the event security_socket_bind
-
     if (!should_trace())
         return 0;
 
@@ -3015,41 +3012,36 @@ int BPF_KPROBE(trace_security_socket_bind)
 
     save_to_submit_buf(submit_p, (void *)&sockfd, sizeof(u32), INT_T, DEC_ARG(0, *tags));
 
+    u16 protocol = get_sock_protocol(sk);
+    local_net_id_t connect_id = {0};
+    connect_id.protocol = protocol;
+
     if (sa_fam == AF_INET) {
-        // saving to submit buffer
+
         save_to_submit_buf(submit_p, (void *)address, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(1, *tags));
 
         struct sockaddr_in *addr = (struct sockaddr_in *)address;
-        // todo: only if udp - update map
 
-        if (READ_KERN(addr->sin_port)){
-
-            // update network map with this new connection
-            local_net_id_t connect_id = {0};
+        if (protocol == IPPROTO_UDP && READ_KERN(addr->sin_port)){
             connect_id.address.s6_addr32[3] = READ_KERN(addr->sin_addr).s_addr;
             connect_id.address.s6_addr16[5] = 0xffff;
             connect_id.port = READ_KERN(addr->sin_port);
-            connect_id.protocol = get_sock_protocol(sk);
-
-            bpf_map_update_elem(&network_map, &connect_id, &context.host_tid, BPF_ANY);
         }
     }
     else if (sa_fam == AF_INET6) {
-        // saving to submit buffer
+
         save_to_submit_buf(submit_p, (void *)address, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(1, *tags));
 
         struct sockaddr_in6 *addr = (struct sockaddr_in6 *)address;
 
-        if (READ_KERN(addr->sin6_port)){
-
-            // update network map with this new connection
-            local_net_id_t connect_id = {0};
+        if (protocol == IPPROTO_UDP && READ_KERN(addr->sin6_port)){
             connect_id.address = READ_KERN(addr->sin6_addr);
             connect_id.port = READ_KERN(addr->sin6_port);
-            connect_id.protocol = get_sock_protocol(sk);
-
-            bpf_map_update_elem(&network_map, &connect_id, &context.host_tid, BPF_ANY);
         }
+    }
+
+    if (connect_id.port) {
+        bpf_map_update_elem(&network_map, &connect_id, &context.host_tid, BPF_ANY);
     }
 
     events_perf_submit(ctx);
