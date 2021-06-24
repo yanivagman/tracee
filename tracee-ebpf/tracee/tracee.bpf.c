@@ -3105,22 +3105,24 @@ int BPF_KPROBE(trace_udpv6_destroy_sock)
     return net_map_update_or_delete_sock(sk, 0);
 };
 
+// include/trace/events/sock.h:
+// TP_PROTO(const struct sock *sk, const int oldstate, const int newstate)
 SEC("raw_tracepoint/inet_sock_set_state")
 int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
 {
     local_net_id_t connect_id = {0};
     local_net_id_t *connect_id_p;
 
-    // according to: https://elixir.bootlin.com/linux/latest/source/include/trace/events/sock.h#L138
     struct sock *sk = (struct sock *)ctx->args[0];
     int old_state = ctx->args[1];
     int new_state = ctx->args[2];
 
     u64 pointer_address = (u64)sk;
 
-    // sometime socket state may be changed by other processes that handle the tcp network stack.
-    // so we save the socket pointer in sock_ptr_map, and if this socket changes state than we don't care which process
-    // initiated it.
+    // Sometimes the socket state may be changed by other contexts that handle the tcp network stack (e.g. network driver).
+    // In these cases, we won't pass the should_trace() check.
+    // To overcome this problem, we save the socket pointer in sock_ptr_map in states that we observed to have the correct context.
+    // We can then check for the existance of a socket in the map, and continue if it was traced before.
     connect_id_p = bpf_map_lookup_elem(&sock_ptr_map, &pointer_address);
     if (!connect_id_p) {
         if (!should_trace()) {
@@ -3184,16 +3186,20 @@ int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
         connect_id_p = &connect_id;
     }
 
-    // this is where we save the socket address in sock_ptr_map for the first time - for client path.
-    // we save it here because when we have outgoing network to remote host - we get 'TCP_ESTABLISHED' with context
-    // different from the 'TCP_SYN_SENT' context.
+    // When we have an outgoing network connection to a remote server, we get 'TCP_ESTABLISHED' with a context
+    // which is different from the client's context.
+    // We use 'TCP_SYN_SENT' state change, which we observed to always happen in the correct context,
+    // and save the socket in sock_ptr_map so we can avoid performing the should_trace() check
+    // Note that in this state, the port equals to 0, so we don't update the network_map here
     if (new_state == TCP_SYN_SENT) {
         bpf_map_update_elem(&sock_ptr_map, &pointer_address, connect_id_p, BPF_ANY);
     }
 
     if (connect_id_p->port) {
-        // we update the network_map for 'TCP_LISTEN' because in the case of local server program and local client program, which talk via the 'lo' interface.
-        // in this case, when we look at the server, we won't see 'TCP_ESTABLISHED'.
+        // Ideally, we would update the network map only in 'TCP_ESTABLISHED' state.
+        // However, in the case of a local server program and a local client program, which communicate via the 'lo' interface,
+        // the change to the 'TCP_ESTABLISHED' state of the server's socket doesn't happen in the (process) context of the server.
+        // To update the network_map correctly in that case, we use the 'TCP_LISTEN' state.
         if (new_state == TCP_LISTEN || new_state == TCP_ESTABLISHED) {
             bpf_map_update_elem(&sock_ptr_map, &pointer_address, connect_id_p, BPF_ANY);
             u32 tid = bpf_get_current_pid_tgid();
