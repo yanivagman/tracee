@@ -3811,9 +3811,7 @@ static __always_inline int tc_probe(struct __sk_buff *skb, bool ingress) {
 
     uint32_t l4_hdr_off;
 
-    u16 eth_protocol = bpf_ntohs(eth->h_proto);
-
-    switch (eth_protocol) {
+    switch (bpf_ntohs(eth->h_proto)) {
     case ETH_P_IP:
         l4_hdr_off = sizeof(struct ethhdr) + sizeof(struct iphdr);
 
@@ -3891,7 +3889,8 @@ static __always_inline int tc_probe(struct __sk_buff *skb, bool ingress) {
             // Note: A conflict might occur between processes in different namespace that bind to 0.0.0.0
             // todo: handle network namespaces conflicts
             __builtin_memset(connect_id.address.s6_addr, 0, sizeof(connect_id.address.s6_addr));
-            if (eth_protocol == ETH_P_IP)
+            eth = (void *)head;
+            if (bpf_ntohs(eth->h_proto) == ETH_P_IP)
                 connect_id.address.s6_addr16[5] = 0xffff;
             tid = bpf_map_lookup_elem(&network_map, &connect_id);
             if (tid == NULL) {
