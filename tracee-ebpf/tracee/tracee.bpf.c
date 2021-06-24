@@ -189,12 +189,8 @@ extern bool CONFIG_ARCH_HAS_SYSCALL_WRAPPER __kconfig;
 #define SECURITY_SB_MOUNT       1022
 #define SECURITY_BPF            1023
 #define SECURITY_BPF_MAP        1024
-#define UDP_SENDMSG             1025
-#define UDP_DISCONNECT          1026
-#define UDP_DESTROY_SOCK        1027
-#define UDPV6_DESTROY_SOCK      1028
-#define INET_SOCK_SET_STATE     1029
-#define MAX_EVENT_ID            1030
+#define NET_FLOWS               1025
+#define MAX_EVENT_ID            1026
 
 #define CONFIG_SHOW_SYSCALL         1
 #define CONFIG_EXEC_ENV             2
