@@ -3122,7 +3122,7 @@ int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
     // Sometimes the socket state may be changed by other contexts that handle the tcp network stack (e.g. network driver).
     // In these cases, we won't pass the should_trace() check.
     // To overcome this problem, we save the socket pointer in sock_ptr_map in states that we observed to have the correct context.
-    // We can then check for the existance of a socket in the map, and continue if it was traced before.
+    // We can then check for the existence of a socket in the map, and continue if it was traced before.
     connect_id_p = bpf_map_lookup_elem(&sock_ptr_map, &pointer_address);
     if (!connect_id_p) {
         if (!should_trace()) {
@@ -3875,7 +3875,6 @@ static __always_inline int tc_probe(struct __sk_buff *skb, bool ingress) {
         return TC_ACT_OK;
     }
 
-    // todo: verify that we capture ipv6 flows correctly
     connect_id.protocol = pkt.protocol;
     connect_id.address = pkt.src_addr;
     connect_id.port = pkt.src_port;
