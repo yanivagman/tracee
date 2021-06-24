@@ -278,9 +278,8 @@ func New(cfg Config) (*Tracee, error) {
 	}
 
 	if cfg.Capture.NetIfaces != nil {
-		setEssential(ConnectEventID)
-		setEssential(SecuritySocketConnectEventID)
-		setEssential(SecuritySocketAcceptEventID)
+		setEssential(SecuritySocketBindEventID)
+		setEssential(NetFlowsEventID)
 	}
 
 	// create tracee
@@ -325,6 +324,9 @@ func New(cfg Config) (*Tracee, error) {
 		setEssential(VfsWritevEventID)
 	}
 
+	if t.eventsToTrace[NetFlowsEventID] {
+		setEssential(SecuritySocketBindEventID)
+	}
 	// Compile final list of events to trace including essential events
 	for id, event := range EventsIDToEvent {
 		// If an essential event was not requested by the user, set its map value to false
@@ -390,8 +392,8 @@ func New(cfg Config) (*Tracee, error) {
 
 		// todo: handle multiple ifaces (like xdpdump: https://github.com/cloudflare/xdpcap/blob/master/cmd/xdpcap/main.go)
 		ngIface := pcapgo.NgInterface{
-			Name:       "test1",
-			Comment:    "tc wlp2s0 iface",
+			Name:       "tc iface",
+			Comment:    "tc iface",
 			Filter:     "",
 			LinkType:   layers.LinkTypeEthernet,
 			SnapLength: uint32(math.MaxUint16),
