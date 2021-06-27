@@ -167,11 +167,6 @@ const (
 	SecurityBPFEventID
 	SecurityBPFMapEventID
 	NetFlowsEventID
-	UdpSendmsgEventID
-	UdpDisconnectEventID
-	UdpV4DestroySockEventID
-	UdpV6DestroySockEventID
-	InetSockSetStateEventID
 	MaxEventID
 )
 
@@ -927,9 +922,4 @@ var EventsIDToParams = map[int32][]external.ArgMeta{
 	SecurityBPFEventID:           {{Type: "int", Name: "cmd"}},
 	SecurityBPFMapEventID:        {{Type: "unsigned int", Name: "map_id"}, {Type: "const char*", Name: "map_name"}},
 	NetFlowsEventID:              {},
-	UdpSendmsgEventID:            {{Type: "struct sockaddr*", Name: "local_addr"}},
-	UdpDisconnectEventID:         {{Type: "struct sockaddr*", Name: "local_addr"}},
-	UdpV4DestroySockEventID:      {{Type: "struct sockaddr*", Name: "local_addr"}},
-	UdpV6DestroySockEventID:      {{Type: "struct sockaddr*", Name: "local_addr"}},
-	InetSockSetStateEventID:      {{Type: "int", Name: "old_state"}, {Type: "int", Name: "new_state"}, {Type: "struct sockaddr*", Name: "local_addr"}, {Type: "struct sockaddr*", Name: "remote_addr"}, {Type: "int", Name: "old"}, {Type: "int", Name: "new"}, {Type: "int", Name: "pointer_address"}},
 }
