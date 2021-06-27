@@ -169,6 +169,15 @@ const (
 	MaxEventID
 )
 
+const (
+	DebugNetSecurityBind int32 = iota
+	DebugNetUdpSendmsg
+	DebugNetUdpDisconnect
+	DebugNetUdpDestroySock
+	DebugNetUdpV6DestroySock
+	DebugNetInetSockSetState
+)
+
 // EventsIDToEvent is list of supported events, indexed by their ID
 var EventsIDToEvent = map[int32]EventConfig{
 	ReadEventID:                  {ID: ReadEventID, ID32Bit: sys32read, Name: "read", Probes: []probe{{event: "read", attach: sysCall, fn: "read"}}, Sets: []string{"syscalls", "fs", "fs_read_write"}},
@@ -545,7 +554,7 @@ var EventsIDToEvent = map[int32]EventConfig{
 	SecuritySocketListenEventID:  {ID: SecuritySocketListenEventID, ID32Bit: sys32undefined, Name: "security_socket_listen", Probes: []probe{{event: "security_socket_listen", attach: kprobe, fn: "trace_security_socket_listen"}}, Sets: []string{"lsm_hooks"}},
 	SecuritySocketConnectEventID: {ID: SecuritySocketConnectEventID, ID32Bit: sys32undefined, Name: "security_socket_connect", Probes: []probe{{event: "security_socket_connect", attach: kprobe, fn: "trace_security_socket_connect"}}, Sets: []string{"lsm_hooks"}},
 	SecuritySocketAcceptEventID:  {ID: SecuritySocketAcceptEventID, ID32Bit: sys32undefined, Name: "security_socket_accept", Probes: []probe{{event: "security_socket_accept", attach: kprobe, fn: "trace_security_socket_accept"}}, Sets: []string{"lsm_hooks"}},
-	SecuritySocketBindEventID:    {ID: SecuritySocketBindEventID, ID32Bit: sys32undefined, Name: "security_socket_bind", Probes: []probe{{event: "security_socket_bind", attach: kprobe, fn: "trace_security_socket_bind"}}, Sets: []string{"lsm_hooks"}},
+	SecuritySocketBindEventID:    {ID: SecuritySocketBindEventID, ID32Bit: sys32undefined, Name: "security_socket_bind", Probes: []probe{{event: "security_socket_bind", attach: kprobe, fn: "trace_security_socket_bind"}}, Sets: []string{"lsm_hooks", "udp"}},
 	SecuritySbMountEventID:       {ID: SecuritySbMountEventID, ID32Bit: sys32undefined, Name: "security_sb_mount", Probes: []probe{{event: "security_sb_mount", attach: kprobe, fn: "trace_security_sb_mount"}}, Sets: []string{"default", "lsm_hooks"}},
 	SecurityBPFEventID:           {ID: SecurityBPFEventID, ID32Bit: sys32undefined, Name: "security_bpf", Probes: []probe{{event: "security_bpf", attach: kprobe, fn: "trace_security_bpf"}}, Sets: []string{"lsm_hooks"}},
 	SecurityBPFMapEventID:        {ID: SecurityBPFMapEventID, ID32Bit: sys32undefined, Name: "security_bpf_map", Probes: []probe{{event: "security_bpf_map", attach: kprobe, fn: "trace_security_bpf_map"}}, Sets: []string{"lsm_hooks"}},

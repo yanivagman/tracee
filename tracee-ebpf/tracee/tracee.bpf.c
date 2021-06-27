@@ -189,8 +189,14 @@ extern bool CONFIG_ARCH_HAS_SYSCALL_WRAPPER __kconfig;
 #define SECURITY_SB_MOUNT       1022
 #define SECURITY_BPF            1023
 #define SECURITY_BPF_MAP        1024
-#define NET_FLOWS               1025
-#define MAX_EVENT_ID            1026
+#define MAX_EVENT_ID            1025
+
+#define DEBUG_NET_SECURITY_BIND         1
+#define DEBUG_NET_UDP_SENDMSG           2
+#define DEBUG_NET_UDP_DISCONNECT        3
+#define DEBUG_NET_UDP_DESTROY_SOCK      4
+#define DEBUG_NET_UDPV6_DESTROY_SOCK    5
+#define DEBUG_NET_INET_SOCK_SET_STATE   6
 
 #define CONFIG_SHOW_SYSCALL         1
 #define CONFIG_EXEC_ENV             2
@@ -421,6 +427,16 @@ struct packet_t {
   uint64_t ts;
 };
 
+struct debug_event_t {
+  char *event_name;
+  struct in6_addr src_addr, dst_addr;
+  __be16 src_port, dst_port;
+  u8 protocol;
+  int old_state;
+  int new_state;
+};
+
+
 /*================================ KERNEL STRUCTS =============================*/
 
 #ifndef CORE
@@ -475,7 +491,8 @@ BPF_STACK_TRACE(stack_addresses, MAX_STACK_ADDRESSES);  // Used to store stack t
 
 BPF_PERF_OUTPUT(events);                            // Events submission
 BPF_PERF_OUTPUT(file_writes);                       // File writes events submission
-BPF_PERF_OUTPUT(net_events);                        // Network events submission
+BPF_PERF_OUTPUT(net_packets);                       // Netowrk packets submission
+BPF_PERF_OUTPUT(net_debug);                        // Netowrk events submission
 
 /*================== KERNEL VERSION DEPENDANT HELPER FUNCTIONS =================*/
 
@@ -1908,7 +1925,7 @@ static __always_inline int get_local_net_id_from_network_details_v6(struct sock 
 }
 
 // To delete socket from net map use tid==0, otherwise, update
-static __always_inline int net_map_update_or_delete_sock(struct sock *sk, u32 tid)
+static __always_inline int net_map_update_or_delete_sock(struct sock *sk, u32 tid, char *event_name)
 {
     local_net_id_t connect_id = {0};
     u16 family = get_sock_family(sk);
@@ -3050,6 +3067,19 @@ int BPF_KPROBE(trace_security_socket_bind)
     }
 
     events_perf_submit(ctx);
+
+    // netDebug event
+    struct debug_event_t debug_event;
+    debug_event.event_name = DEBUG_NET_SECURITY_BIND;
+    debug_event.src_addr = "change";
+    debug_event.dst_addr = "change";
+    debug_event.src_port = "change";
+    debug_event.dst_port = "change";
+    debug_event.protocol = protocol;
+    debug_event.old_state = -1;
+    debug_event.new_state = -1;
+    bpf_perf_event_output(ctx, &net_debug, BPF_F_CURRENT_CPU, address, sizeof(*address));
+
     return 0;
 };
 
@@ -3906,7 +3936,7 @@ static __always_inline int tc_probe(struct __sk_buff *skb, bool ingress) {
      */
     u64 flags = BPF_F_CURRENT_CPU;
     flags |= (u64)skb->len << 32;
-    bpf_perf_event_output(skb, &net_events, flags, &pkt, sizeof(pkt));
+    bpf_perf_event_output(skb, &net_packets, flags, &pkt, sizeof(pkt));
 
     return TC_ACT_OK;
 }
