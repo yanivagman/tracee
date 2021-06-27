@@ -901,6 +901,25 @@ func (t *Tracee) initBPF(bpfObjectPath string) error {
 		}
 	}
 
+	if t.config.Capture.NetIfaces == nil {
+		prog, _ := t.bpfModule.GetProgram("tc_ingress")
+		if prog == nil {
+			return fmt.Errorf("couldn't find tc_ingress program")
+		}
+		err = prog.SetAutoload(false)
+		if err != nil {
+			return err
+		}
+		prog, _ = t.bpfModule.GetProgram("tc_egress")
+		if prog == nil {
+			return fmt.Errorf("couldn't find tc_egress program")
+		}
+		err = prog.SetAutoload(false)
+		if err != nil {
+			return err
+		}
+	}
+
 	err = t.bpfModule.BPFLoadObject()
 	if err != nil {
 		return err
