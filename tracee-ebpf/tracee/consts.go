@@ -166,7 +166,6 @@ const (
 	SecuritySbMountEventID
 	SecurityBPFEventID
 	SecurityBPFMapEventID
-	NetFlowsEventID
 	MaxEventID
 )
 
@@ -550,7 +549,6 @@ var EventsIDToEvent = map[int32]EventConfig{
 	SecuritySbMountEventID:       {ID: SecuritySbMountEventID, ID32Bit: sys32undefined, Name: "security_sb_mount", Probes: []probe{{event: "security_sb_mount", attach: kprobe, fn: "trace_security_sb_mount"}}, Sets: []string{"default", "lsm_hooks"}},
 	SecurityBPFEventID:           {ID: SecurityBPFEventID, ID32Bit: sys32undefined, Name: "security_bpf", Probes: []probe{{event: "security_bpf", attach: kprobe, fn: "trace_security_bpf"}}, Sets: []string{"lsm_hooks"}},
 	SecurityBPFMapEventID:        {ID: SecurityBPFMapEventID, ID32Bit: sys32undefined, Name: "security_bpf_map", Probes: []probe{{event: "security_bpf_map", attach: kprobe, fn: "trace_security_bpf_map"}}, Sets: []string{"lsm_hooks"}},
-	NetFlowsEventID:              {ID: NetFlowsEventID, ID32Bit: sys32undefined, Name: "net_flows", Probes: []probe{{event: "udp_sendmsg", attach: kprobe, fn: "trace_udp_sendmsg"}, {event: "__udp_disconnect", attach: kprobe, fn: "trace_udp_disconnect"}, {event: "udp_destroy_sock", attach: kprobe, fn: "trace_udp_destroy_sock"}, {event: "udpv6_destroy_sock", attach: kprobe, fn: "trace_udpv6_destroy_sock"}, {event: "sock:inet_sock_set_state", attach: rawTracepoint, fn: "tracepoint__inet_sock_set_state"}}, Sets: []string{}},
 }
 
 // EventsIDToParams is list of the parameters (name and type) used by the events
@@ -921,5 +919,4 @@ var EventsIDToParams = map[int32][]external.ArgMeta{
 	SecuritySbMountEventID:       {{Type: "const char*", Name: "dev_name"}, {Type: "const char*", Name: "path"}, {Type: "const char*", Name: "type"}, {Type: "unsigned long", Name: "flags"}},
 	SecurityBPFEventID:           {{Type: "int", Name: "cmd"}},
 	SecurityBPFMapEventID:        {{Type: "unsigned int", Name: "map_id"}, {Type: "const char*", Name: "map_name"}},
-	NetFlowsEventID:              {},
 }

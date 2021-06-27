@@ -37,6 +37,7 @@ type Config struct {
 	PerfBufferSize     int
 	BlobPerfBufferSize int
 	SecurityAlerts     bool
+	DebugNet           bool
 	maxPidsCache       int // maximum number of pids to cache per mnt ns (in Tracee.pidsInMntns)
 	BPFObjPath         string
 	ChanEvents         chan external.Event
@@ -123,8 +124,8 @@ type OutputConfig struct {
 }
 
 type netProbe struct {
-	ingressHook     *bpf.TcHook
-	egressHook      *bpf.TcHook
+	ingressHook *bpf.TcHook
+	egressHook  *bpf.TcHook
 }
 
 // Validate does static validation of the configuration
@@ -277,9 +278,8 @@ func New(cfg Config) (*Tracee, error) {
 		setEssential(MemProtAlertEventID)
 	}
 
-	if cfg.Capture.NetIfaces != nil {
+	if cfg.Capture.NetIfaces != nil || cfg.DebugNet {
 		setEssential(SecuritySocketBindEventID)
-		setEssential(NetFlowsEventID)
 	}
 
 	// create tracee
@@ -324,9 +324,6 @@ func New(cfg Config) (*Tracee, error) {
 		setEssential(VfsWritevEventID)
 	}
 
-	if t.eventsToTrace[NetFlowsEventID] {
-		setEssential(SecuritySocketBindEventID)
-	}
 	// Compile final list of events to trace including essential events
 	for id, event := range EventsIDToEvent {
 		// If an essential event was not requested by the user, set its map value to false
@@ -869,6 +866,55 @@ func (t *Tracee) attachTcProg(ifaceName string, attachPoint bpf.TcAttachPoint, p
 	return hook, nil
 }
 
+func (t *Tracee) attachNetProbes() error {
+	prog, _ := t.bpfModule.GetProgram("trace_udp_sendmsg")
+	if prog == nil {
+		return fmt.Errorf("couldn't find trace_udp_sendmsg program")
+	}
+	_, err := prog.AttachKprobe("udp_sendmsg")
+	if err != nil {
+		return fmt.Errorf("error attaching event udp_sendmsg: %v", err)
+	}
+
+	prog, _ = t.bpfModule.GetProgram("trace_udp_disconnect")
+	if prog == nil {
+		return fmt.Errorf("couldn't find trace_udp_disconnect program")
+	}
+	_, err = prog.AttachKprobe("__udp_disconnect")
+	if err != nil {
+		return fmt.Errorf("error attaching event __udp_disconnect: %v", err)
+	}
+
+	prog, _ = t.bpfModule.GetProgram("trace_udp_destroy_sock")
+	if prog == nil {
+		return fmt.Errorf("couldn't find trace_udp_destroy_sock program")
+	}
+	_, err = prog.AttachKprobe("udp_destroy_sock")
+	if err != nil {
+		return fmt.Errorf("error attaching event udp_destroy_sock: %v", err)
+	}
+
+	prog, _ = t.bpfModule.GetProgram("trace_udpv6_destroy_sock")
+	if prog == nil {
+		return fmt.Errorf("couldn't find trace_udpv6_destroy_sock program")
+	}
+	_, err = prog.AttachKprobe("udpv6_destroy_sock")
+	if err != nil {
+		return fmt.Errorf("error attaching event udpv6_destroy_sock: %v", err)
+	}
+
+	prog, _ = t.bpfModule.GetProgram("tracepoint__inet_sock_set_state")
+	if prog == nil {
+		return fmt.Errorf("couldn't find tracepoint__inet_sock_set_state program")
+	}
+	_, err = prog.AttachRawTracepoint("inet_sock_set_state")
+	if err != nil {
+		return fmt.Errorf("error attaching event sock:inet_sock_set_state: %v", err)
+	}
+
+	return nil
+}
+
 func (t *Tracee) initBPF(bpfObjectPath string) error {
 	var err error
 
@@ -901,22 +947,18 @@ func (t *Tracee) initBPF(bpfObjectPath string) error {
 		}
 	}
 
-	if t.config.Capture.NetIfaces == nil {
-		prog, _ := t.bpfModule.GetProgram("tc_ingress")
-		if prog == nil {
-			return fmt.Errorf("couldn't find tc_ingress program")
-		}
-		err = prog.SetAutoload(false)
-		if err != nil {
-			return err
-		}
-		prog, _ = t.bpfModule.GetProgram("tc_egress")
-		if prog == nil {
-			return fmt.Errorf("couldn't find tc_egress program")
-		}
-		err = prog.SetAutoload(false)
-		if err != nil {
-			return err
+	if t.config.Capture.NetIfaces == nil && !t.config.DebugNet {
+		// SecuritySocketBindEventID is set as an essentialEvent if 'capture net' or 'debug-net' were chosen by the user.
+		networkProbes := []string{"tc_ingress", "tc_egress", "trace_udp_sendmsg", "trace_udp_disconnect", "trace_udp_destroy_sock", "trace_udpv6_destroy_sock", "tracepoint__inet_sock_set_state"}
+		for _, progName := range networkProbes {
+			prog, _ := t.bpfModule.GetProgram(progName)
+			if prog == nil {
+				return fmt.Errorf("couldn't find %s program", progName)
+			}
+			err = prog.SetAutoload(false)
+			if err != nil {
+				return err
+			}
 		}
 	}
 
@@ -930,19 +972,25 @@ func (t *Tracee) initBPF(bpfObjectPath string) error {
 		return err
 	}
 
-	if t.config.Capture.NetIfaces != nil {
-		ifaceName := t.config.Capture.NetIfaces[0]
-		// Todo: we can use the net package to enumerate the interfaces on the system
-		// also, it can be used to get their addresses (see the net package doc for other functionality)
-		// think if this can be used somehow
+	if t.config.Capture.NetIfaces != nil || t.config.DebugNet {
+		if (t.config.Capture.NetIfaces != nil) {
+			ifaceName := t.config.Capture.NetIfaces[0]
+			// Todo: we can use the net package to enumerate the interfaces on the system
+			// also, it can be used to get their addresses (see the net package doc for other functionality)
+			// think if this can be used somehow
 
-		t.tcProbe.ingressHook, err = t.attachTcProg(ifaceName, bpf.BPFTcIngress, "tc_ingress")
-		if err != nil {
-			return err
+			t.tcProbe.ingressHook, err = t.attachTcProg(ifaceName, bpf.BPFTcIngress, "tc_ingress")
+			if err != nil {
+				return err
+			}
+
+			t.tcProbe.egressHook, err = t.attachTcProg(ifaceName, bpf.BPFTcEgress, "tc_egress")
+			if err != nil {
+				return err
+			}
 		}
 
-		t.tcProbe.egressHook, err = t.attachTcProg(ifaceName, bpf.BPFTcEgress, "tc_egress")
-		if err != nil {
+		if err = t.attachNetProbes(); err != nil {
 			return err
 		}
 	}
@@ -1663,7 +1711,9 @@ func (t *Tracee) processNetEvents() {
 				// Offset of 3 bytes as struct is 64-bit aligned.
 				TimeStamp: binary.LittleEndian.Uint64(in[40:48]),
 			}
-			fmt.Printf("%+v, size: %d\n", pkt, len(in[48:]))
+			if t.config.DebugNet {
+				fmt.Printf("%+v, size: %d\n", pkt, len(in[48:]))
+			}
 
 			info := gopacket.CaptureInfo{
 				Timestamp:      time.Unix(0, int64(pkt.TimeStamp)),

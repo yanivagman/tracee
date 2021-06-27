@@ -45,6 +45,7 @@ func main() {
 				PerfBufferSize:     c.Int("perf-buffer-size"),
 				BlobPerfBufferSize: c.Int("blob-perf-buffer-size"),
 				SecurityAlerts:     c.Bool("security-alerts"),
+				DebugNet:           c.Bool("debug-net"),
 			}
 			output, err := prepareOutput(c.StringSlice("output"))
 			if err != nil {
@@ -129,6 +130,11 @@ func main() {
 				Value:       false,
 				Usage:       "write verbose debug messages to standard output and retain intermediate artifacts",
 				Destination: &debug,
+			},
+			&cli.BoolFlag{
+				Name:  "debug-net",
+				Value: false,
+				Usage: "write verbose networking debug events to standard output",
 			},
 			&cli.StringFlag{
 				Name:        "install-path",
