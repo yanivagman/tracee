@@ -191,6 +191,7 @@ extern bool CONFIG_ARCH_HAS_SYSCALL_WRAPPER __kconfig;
 #define SECURITY_BPF_MAP        1024
 #define MAX_EVENT_ID            1025
 
+#define NET_PACKET                      0
 #define DEBUG_NET_SECURITY_BIND         1
 #define DEBUG_NET_UDP_SENDMSG           2
 #define DEBUG_NET_UDP_DISCONNECT        3
@@ -420,20 +421,18 @@ typedef struct local_net_id {
     u16 protocol;
 } local_net_id_t;
 
-struct packet_t {
-  struct in6_addr src_addr, dst_addr;
-  __be16 src_port, dst_port;
-  u8 protocol;
-  uint64_t ts;
-};
-
-struct debug_event_t {
-  char *event_name;
-  struct in6_addr src_addr, dst_addr;
-  __be16 src_port, dst_port;
-  u8 protocol;
-  int old_state;
-  int new_state;
+struct net_event_t {
+    int event_id;
+    struct in6_addr src_addr, dst_addr;
+    __be16 src_port, dst_port;
+    u8 protocol;
+    union {
+        uint64_t ts;
+        struct {
+            int tcp_old_state;
+            int tcp_new_state;
+        } tcp_states;
+    };
 };
 
 
@@ -491,8 +490,7 @@ BPF_STACK_TRACE(stack_addresses, MAX_STACK_ADDRESSES);  // Used to store stack t
 
 BPF_PERF_OUTPUT(events);                            // Events submission
 BPF_PERF_OUTPUT(file_writes);                       // File writes events submission
-BPF_PERF_OUTPUT(net_packets);                       // Netowrk packets submission
-BPF_PERF_OUTPUT(net_debug);                        // Netowrk events submission
+BPF_PERF_OUTPUT(net_events);                        // Network events submission
 
 /*================== KERNEL VERSION DEPENDANT HELPER FUNCTIONS =================*/
 
@@ -1925,7 +1923,7 @@ static __always_inline int get_local_net_id_from_network_details_v6(struct sock 
 }
 
 // To delete socket from net map use tid==0, otherwise, update
-static __always_inline int net_map_update_or_delete_sock(struct sock *sk, u32 tid, char *event_name)
+static __always_inline int net_map_update_or_delete_sock(int event_id, struct sock *sk, u32 tid)
 {
     local_net_id_t connect_id = {0};
     u16 family = get_sock_family(sk);
@@ -3069,16 +3067,16 @@ int BPF_KPROBE(trace_security_socket_bind)
     events_perf_submit(ctx);
 
     // netDebug event
-    struct debug_event_t debug_event;
-    debug_event.event_name = DEBUG_NET_SECURITY_BIND;
-    debug_event.src_addr = "change";
-    debug_event.dst_addr = "change";
-    debug_event.src_port = "change";
-    debug_event.dst_port = "change";
-    debug_event.protocol = protocol;
-    debug_event.old_state = -1;
-    debug_event.new_state = -1;
-    bpf_perf_event_output(ctx, &net_debug, BPF_F_CURRENT_CPU, address, sizeof(*address));
+    // struct debug_event_t debug_event;
+    // debug_event.event_name = DEBUG_NET_SECURITY_BIND;
+    // debug_event.src_addr = "change";
+    // debug_event.dst_addr = "change";
+    // debug_event.src_port = "change";
+    // debug_event.dst_port = "change";
+    // debug_event.protocol = protocol;
+    // debug_event.old_state = -1;
+    // debug_event.new_state = -1;
+    // bpf_perf_event_output(ctx, &net_debug, BPF_F_CURRENT_CPU, address, sizeof(*address));
 
     return 0;
 };
@@ -3092,7 +3090,7 @@ int BPF_KPROBE(trace_udp_sendmsg)
     struct sock *sk = (struct sock *)PT_REGS_PARM1(ctx);
     u32 tid = bpf_get_current_pid_tgid();
 
-    return net_map_update_or_delete_sock(sk, tid);
+    return net_map_update_or_delete_sock(DEBUG_NET_UDP_SENDMSG, sk, tid);
 };
 
 SEC("kprobe/__udp_disconnect")
@@ -3103,7 +3101,7 @@ int BPF_KPROBE(trace_udp_disconnect)
 
     struct sock *sk = (struct sock *)PT_REGS_PARM1(ctx);
 
-    return net_map_update_or_delete_sock(sk, 0);
+    return net_map_update_or_delete_sock(DEBUG_NET_UDP_DISCONNECT, sk, 0);
 };
 
 SEC("kprobe/udp_destroy_sock")
@@ -3114,7 +3112,7 @@ int BPF_KPROBE(trace_udp_destroy_sock)
 
     struct sock *sk = (struct sock *)PT_REGS_PARM1(ctx);
 
-    return net_map_update_or_delete_sock(sk, 0);
+    return net_map_update_or_delete_sock(DEBUG_NET_UDP_DESTROY_SOCK, sk, 0);
 };
 
 SEC("kprobe/udpv6_destroy_sock")
@@ -3125,7 +3123,7 @@ int BPF_KPROBE(trace_udpv6_destroy_sock)
 
     struct sock *sk = (struct sock *)PT_REGS_PARM1(ctx);
 
-    return net_map_update_or_delete_sock(sk, 0);
+    return net_map_update_or_delete_sock(DEBUG_NET_UDPV6_DESTROY_SOCK, sk, 0);
 };
 
 // include/trace/events/sock.h:
@@ -3828,7 +3826,7 @@ static __always_inline int tc_probe(struct __sk_buff *skb, bool ingress) {
     }
 
     struct ethhdr *eth = (void *)head;
-    struct packet_t pkt = {0};
+    struct net_event_t pkt = {0};
     pkt.ts = bpf_ktime_get_ns();
     local_net_id_t connect_id = {0};
 
@@ -3936,7 +3934,7 @@ static __always_inline int tc_probe(struct __sk_buff *skb, bool ingress) {
      */
     u64 flags = BPF_F_CURRENT_CPU;
     flags |= (u64)skb->len << 32;
-    bpf_perf_event_output(skb, &net_packets, flags, &pkt, sizeof(pkt));
+    bpf_perf_event_output(skb, &net_events, flags, &pkt, sizeof(pkt));
 
     return TC_ACT_OK;
 }

@@ -200,35 +200,32 @@ type profilerInfo struct {
 
 // Tracee traces system calls and system events using eBPF
 type Tracee struct {
-	config                Config
-	eventsToTrace         map[int32]bool
-	bpfModule             *bpf.Module
-	eventsPerfMap         *bpf.PerfBuffer
-	fileWrPerfMap         *bpf.PerfBuffer
-	netPacketsPerfMap     *bpf.PerfBuffer
-	netDebugPerfMap       *bpf.PerfBuffer
-	eventsChannel         chan []byte
-	fileWrChannel         chan []byte
-	netPacketsChannel     chan []byte
-	netDebugChannel       chan []byte
-	lostEvChannel         chan uint64
-	lostWrChannel         chan uint64
-	lostNetPacketsChannel chan uint64
-	lostNetDebugChannel   chan uint64
-	printer               eventPrinter
-	stats                 statsStore
-	capturedFiles         map[string]int64
-	profiledFiles         map[string]profilerInfo
-	writtenFiles          map[string]string
-	mntNsFirstPid         map[uint32]uint32
-	DecParamName          [2]map[argTag]string
-	EncParamName          [2]map[string]argTag
-	ParamTypes            map[int32]map[string]string
-	pidsInMntns           bucketsCache //record the first n PIDs (host) in each mount namespace, for internal usage
-	StackAddressesMap     *bpf.BPFMap
-	tcProbe               netProbe
-	pcapWriter            *pcapgo.NgWriter
-	pcapFile              *os.File
+	config            Config
+	eventsToTrace     map[int32]bool
+	bpfModule         *bpf.Module
+	eventsPerfMap     *bpf.PerfBuffer
+	fileWrPerfMap     *bpf.PerfBuffer
+	netPerfMap        *bpf.PerfBuffer
+	eventsChannel     chan []byte
+	fileWrChannel     chan []byte
+	netChannel        chan []byte
+	lostEvChannel     chan uint64
+	lostWrChannel     chan uint64
+	lostNetChannel    chan uint64
+	printer           eventPrinter
+	stats             statsStore
+	capturedFiles     map[string]int64
+	profiledFiles     map[string]profilerInfo
+	writtenFiles      map[string]string
+	mntNsFirstPid     map[uint32]uint32
+	DecParamName      [2]map[argTag]string
+	EncParamName      [2]map[string]argTag
+	ParamTypes        map[int32]map[string]string
+	pidsInMntns       bucketsCache //record the first n PIDs (host) in each mount namespace, for internal usage
+	StackAddressesMap *bpf.BPFMap
+	tcProbe           netProbe
+	pcapWriter        *pcapgo.NgWriter
+	pcapFile          *os.File
 }
 
 type counter int32
@@ -245,12 +242,11 @@ func (c *counter) Increment(amount ...int) {
 }
 
 type statsStore struct {
-	eventCounter     counter
-	errorCounter     counter
-	lostEvCounter    counter
-	lostWrCounter    counter
-	lostNtPktCounter counter
-	lostNtEvtCounter counter
+	eventCounter  counter
+	errorCounter  counter
+	lostEvCounter counter
+	lostWrCounter counter
+	lostNtCounter counter
 }
 
 // New creates a new Tracee instance based on a given valid Config
@@ -1045,16 +1041,9 @@ func (t *Tracee) initBPF(bpfObjectPath string) error {
 		return fmt.Errorf("error initializing file_writes perf map: %v", err)
 	}
 
-	t.netPacketsChannel = make(chan []byte, 1000)
-	t.lostNetPacketsChannel = make(chan uint64)
-	t.netPacketsPerfMap, err = t.bpfModule.InitPerfBuf("net_packets", t.netPacketsChannel, t.lostNetPacketsChannel, t.config.BlobPerfBufferSize)
-	if err != nil {
-		return fmt.Errorf("error initializing net perf map: %v", err)
-	}
-
-	t.netDebugChannel = make(chan []byte, 1000)
-	t.lostNetDebugChannel = make(chan uint64)
-	t.netDebugPerfMap, err = t.bpfModule.InitPerfBuf("net_debug", t.netDebugChannel, t.lostNetDebugChannel, t.config.BlobPerfBufferSize)
+	t.netChannel = make(chan []byte, 1000)
+	t.lostNetChannel = make(chan uint64)
+	t.netPerfMap, err = t.bpfModule.InitPerfBuf("net_events", t.netChannel, t.lostNetChannel, t.config.BlobPerfBufferSize)
 	if err != nil {
 		return fmt.Errorf("error initializing net perf map: %v", err)
 	}
@@ -1082,8 +1071,7 @@ func (t *Tracee) Run() error {
 	t.printer.Preamble()
 	t.eventsPerfMap.Start()
 	t.fileWrPerfMap.Start()
-	t.netPacketsPerfMap.Start()
-	t.netDebugPerfMap.Start()
+	t.netPerfMap.Start()
 	go t.processLostEvents()
 	go t.runEventPipeline(done)
 	go t.processFileWrites()
@@ -1091,8 +1079,7 @@ func (t *Tracee) Run() error {
 	<-sig
 	t.eventsPerfMap.Stop()
 	t.fileWrPerfMap.Stop()
-	t.netPacketsPerfMap.Stop()
-	t.netDebugPerfMap.Stop()
+	t.netPerfMap.Stop()
 	t.printer.Epilogue(t.stats)
 
 	// capture profiler stats
@@ -1706,36 +1693,36 @@ func (t *Tracee) processNetEvents() {
 
 	for {
 		select {
-		case in := <-t.netPacketsChannel:
+		case in := <-t.netChannel:
 			// Sanity check - packet metadata is 48 bytes
-			if len(in) < 48 {
+			if len(in) < 56 {
 				return
 			}
 			var srcAddr, dstAddr [16]byte
-			copy(srcAddr[:], in[0:16])
-			copy(dstAddr[:], in[16:32])
+			copy(srcAddr[:], in[4:20])
+			copy(dstAddr[:], in[20:36])
 
 			pkt := packet{
 				SrcIP:    netaddr.IPFrom16(srcAddr),
 				DestIP:   netaddr.IPFrom16(dstAddr),
-				SrcPort:  binary.BigEndian.Uint16(in[32:34]),
-				DestPort: binary.BigEndian.Uint16(in[34:36]),
-				Protocol: uint8(in[36]),
-				// Offset of 3 bytes as struct is 64-bit aligned.
-				TimeStamp: binary.LittleEndian.Uint64(in[40:48]),
+				SrcPort:  binary.BigEndian.Uint16(in[36:38]),
+				DestPort: binary.BigEndian.Uint16(in[38:40]),
+				Protocol: uint8(in[40]),
+				// Offset of 7 bytes as struct is 64-bit aligned.
+				TimeStamp: binary.LittleEndian.Uint64(in[48:56]),
 			}
-			if t.config.DebugNet {
-				fmt.Printf("%+v, size: %d\n", pkt, len(in[48:]))
-			}
+			//if t.config.DebugNet {
+				fmt.Printf("%+v, size: %d\n", pkt, len(in[56:]))
+			//}
 
 			info := gopacket.CaptureInfo{
 				Timestamp:      time.Unix(0, int64(pkt.TimeStamp)),
-				CaptureLength:  len(in[48:]),
-				Length:         len(in[48:]),
+				CaptureLength:  len(in[56:]),
+				Length:         len(in[56:]),
 				InterfaceIndex: 0, // todo: accept array of interfaces?
 			}
 
-			err := t.pcapWriter.WritePacket(info, in[48:])
+			err := t.pcapWriter.WritePacket(info, in[56:])
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "Error writing packet:", err)
 			}
@@ -1746,51 +1733,8 @@ func (t *Tracee) processNetEvents() {
 				fmt.Fprintln(os.Stderr, "Error flushing data:", err)
 			}
 
-		case lost := <-t.lostNetPacketsChannel:
-			t.stats.lostNtPktCounter.Increment(int(lost))
-
-		case in := <-t.netDebugChannel:
-			// Sanity check - packet metadata is 48 bytes
-			if len(in) < 48 {
-				return
-			}
-			var srcAddr, dstAddr [16]byte
-			copy(srcAddr[:], in[0:16])
-			copy(dstAddr[:], in[16:32])
-
-			pkt := packet{
-				SrcIP:    netaddr.IPFrom16(srcAddr),
-				DestIP:   netaddr.IPFrom16(dstAddr),
-				SrcPort:  binary.BigEndian.Uint16(in[32:34]),
-				DestPort: binary.BigEndian.Uint16(in[34:36]),
-				Protocol: uint8(in[36]),
-				// Offset of 3 bytes as struct is 64-bit aligned.
-				TimeStamp: binary.LittleEndian.Uint64(in[40:48]),
-			}
-			if t.config.DebugNet {
-				fmt.Printf("%+v, size: %d\n", pkt, len(in[48:]))
-			}
-
-			info := gopacket.CaptureInfo{
-				Timestamp:      time.Unix(0, int64(pkt.TimeStamp)),
-				CaptureLength:  len(in[48:]),
-				Length:         len(in[48:]),
-				InterfaceIndex: 0, // todo: accept array of interfaces?
-			}
-
-			err := t.pcapWriter.WritePacket(info, in[48:])
-			if err != nil {
-				fmt.Fprintln(os.Stderr, "Error writing packet:", err)
-			}
-
-			// todo: maybe we should not flush every packet?
-			err = t.pcapWriter.Flush()
-			if err != nil {
-				fmt.Fprintln(os.Stderr, "Error flushing data:", err)
-			}
-
-		case lost := <-t.lostNetDebugChannel:
-			t.stats.lostNtEvtCounter.Increment(int(lost))
+		case lost := <-t.lostNetChannel:
+			t.stats.lostNtCounter.Increment(int(lost))
 		}
 	}
 }
