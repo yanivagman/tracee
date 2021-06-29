@@ -1716,6 +1716,17 @@ func (t *Tracee) processNetEvents() {
 		Len         uint32
 	}
 
+	//Todo:
+	// Clear metadata from packets (leave only timestamp+len)
+	// Add timestamp to other debug messages
+	// Clean above structs - possibly having a dedicated inet_set_state debug message
+	// Verify debug messages make sense
+	// Add tid+comm to have context for debug messages (and for later split by context)
+	// Possibly: split pcap by context
+	// Add stats for network packets (in epilog)
+	// if debug is not chosen - don't send messages from bpf code
+	// support syn+syn-ack packets
+	// make beautiful commits for PR
 	for {
 		select {
 		case in := <-t.netChannel:
