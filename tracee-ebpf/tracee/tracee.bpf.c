@@ -432,8 +432,8 @@ struct net_packet_t {
 
 struct net_debug_t {
     u32 event_id;
-    struct in6_addr src_addr, dst_addr;
-    __be16 src_port, dst_port;
+    struct in6_addr local_addr, remote_addr;
+    __be16 local_port, remote_port;
     u8 protocol;
     int tcp_old_state;
     int tcp_new_state;
@@ -1954,9 +1954,9 @@ static __always_inline int net_map_update_or_delete_sock(void* ctx, int event_id
 
     // netDebug event
     struct net_debug_t debug_event = {0};
-    debug_event.event_id = DEBUG_NET_SECURITY_BIND;
-    debug_event.dst_addr = connect_id.address;
-    debug_event.dst_port = connect_id.port;
+    debug_event.event_id = event_id;
+    debug_event.local_addr = connect_id.address;
+    debug_event.local_port = connect_id.port;
     debug_event.protocol = connect_id.protocol;
     bpf_perf_event_output(ctx, &net_events, BPF_F_CURRENT_CPU, &debug_event, sizeof(debug_event));
 
@@ -3081,8 +3081,8 @@ int BPF_KPROBE(trace_security_socket_bind)
     // netDebug event
     struct net_debug_t debug_event = {0};
     debug_event.event_id = DEBUG_NET_SECURITY_BIND;
-    debug_event.dst_addr = connect_id.address;
-    debug_event.dst_port = connect_id.port;
+    debug_event.local_addr = connect_id.address;
+    debug_event.local_port = connect_id.port;
     debug_event.protocol = protocol;
     bpf_perf_event_output(ctx, &net_events, BPF_F_CURRENT_CPU, &debug_event, sizeof(debug_event));
 
@@ -3142,6 +3142,9 @@ int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
     local_net_id_t connect_id = {0};
     local_net_id_t *connect_id_p;
 
+    struct net_debug_t debug_event = {0};
+    debug_event.event_id = DEBUG_NET_INET_SOCK_SET_STATE;
+
     struct sock *sk = (struct sock *)ctx->args[0];
     int old_state = ctx->args[1];
     int new_state = ctx->args[2];
@@ -3191,6 +3194,13 @@ int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
 //
 //        save_to_submit_buf(submit_p, (void *)&remote, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(3, *tags));
 
+        debug_event.local_addr.s6_addr32[3] = net_details.local_address;
+        debug_event.local_addr.s6_addr16[5] = 0xffff;
+        debug_event.local_port = net_details.local_port;
+        debug_event.remote_addr.s6_addr32[3] = net_details.remote_address;
+        debug_event.remote_addr.s6_addr16[5] = 0xffff;
+        debug_event.remote_port = net_details.remote_port;
+
         get_local_net_id_from_network_details_v4(sk, &connect_id, &net_details, family);
     } else if (family == AF_INET6) {
         net_conn_v6_t net_details = {};
@@ -3205,6 +3215,11 @@ int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
 //        get_remote_sockaddr_in6_from_network_details(&remote, &net_details, family);
 //
 //        save_to_submit_buf(submit_p, (void *)&remote, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(3, *tags));
+
+        debug_event.local_addr = net_details.local_address;
+        debug_event.local_port = net_details.local_port;
+        debug_event.remote_addr = net_details.remote_address;
+        debug_event.remote_port = net_details.remote_port;
 
         get_local_net_id_from_network_details_v6(sk, &connect_id, &net_details, family);
     } else {
@@ -3244,6 +3259,10 @@ int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
 //     save_to_submit_buf(submit_p, (void *)&pointer_address, sizeof(int), INT_T, DEC_ARG(6, *tags));
 //
 //     events_perf_submit(ctx);
+
+    // netDebug event
+    debug_event.protocol = connect_id.protocol;
+    bpf_perf_event_output(ctx, &net_events, BPF_F_CURRENT_CPU, &debug_event, sizeof(debug_event));
 
     return 0;
 }

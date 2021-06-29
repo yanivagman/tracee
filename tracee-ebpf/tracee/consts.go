@@ -170,7 +170,7 @@ const (
 )
 
 const (
-	NetPacket int32 = iota
+	NetPacket uint32 = iota
 	DebugNetSecurityBind
 	DebugNetUdpSendmsg
 	DebugNetUdpDisconnect

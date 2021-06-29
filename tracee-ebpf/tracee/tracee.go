@@ -1693,14 +1693,25 @@ func (t *Tracee) processNetEvents() {
 		TimeStamp uint64
 	}
 
+	type netDebugEvent struct {
+		LocalIP     [16]byte
+		RemoteIP    [16]byte
+		LocalPort   uint16
+		RemotePort  uint16
+		Protocol    uint8
+		_           [3]byte //padding
+		TcpOldState uint32
+		TcpNewState uint32
+	}
+
 	type packetMeta struct {
+		TimeStamp   uint64
 		SrcIP       netaddr.IP
 		SrcPort     uint16
 		DestIP      netaddr.IP
 		DestPort    uint16
 		Protocol    uint8
 		Len         uint32
-		TimeStamp   uint64
 	}
 
 	for {
@@ -1712,12 +1723,56 @@ func (t *Tracee) processNetEvents() {
 			}
 
 			netEventId := binary.LittleEndian.Uint32(in[0:4])
+			dataBuff := bytes.NewBuffer(in[4:])
 
 			if netEventId != 0 {
+				if t.config.DebugNet {
+					var pkt netDebugEvent
+					err := binary.Read(dataBuff, binary.LittleEndian, &pkt)
+					if err != nil {
+						t.handleError(err)
+						continue
+					}
+					switch netEventId {
+					case DebugNetSecurityBind:
+						fmt.Printf("event: security_socket_bind, local_addr: %v, local_port: %d, protocol: %d\n",
+							netaddr.IPFrom16(pkt.LocalIP),
+							pkt.LocalPort,
+							pkt.Protocol)
+					case DebugNetUdpSendmsg:
+						fmt.Printf("event: udp_sendmsg, local_addr: %v, local_port: %d, protocol: %d\n",
+							netaddr.IPFrom16(pkt.LocalIP),
+							pkt.LocalPort,
+							pkt.Protocol)
+					case DebugNetUdpDisconnect:
+						fmt.Printf("event: __udp_disconnect, local_addr: %v, local_port: %d, protocol: %d\n",
+							netaddr.IPFrom16(pkt.LocalIP),
+							pkt.LocalPort,
+							pkt.Protocol)
+					case DebugNetUdpDestroySock:
+						fmt.Printf("event: udp_destroy_sock, local_addr: %v, local_port: %d, protocol: %d\n",
+							netaddr.IPFrom16(pkt.LocalIP),
+							pkt.LocalPort,
+							pkt.Protocol)
+					case DebugNetUdpV6DestroySock:
+						fmt.Printf("event: udpv6_destroy_sock, local_addr: %v, local_port: %d, protocol: %d\n",
+							netaddr.IPFrom16(pkt.LocalIP),
+							pkt.LocalPort,
+							pkt.Protocol)
+					case DebugNetInetSockSetState:
+						fmt.Printf("event: inet_sock_set_state, local_addr: %v, local_port: %d, remote_addr: %v, remote_port: %d, protocol: %d, old_state: %d, new_state: %d\n",
+							netaddr.IPFrom16(pkt.LocalIP),
+							pkt.LocalPort,
+							netaddr.IPFrom16(pkt.RemoteIP),
+							pkt.RemotePort,
+							pkt.Protocol,
+							pkt.TcpOldState,
+							pkt.TcpNewState)
+					}
+				}
 				continue
 			}
 
-			dataBuff := bytes.NewBuffer(in[4:])
 			var pkt netEvent
 			err := binary.Read(dataBuff, binary.LittleEndian, &pkt)
 			if err != nil {
@@ -1727,12 +1782,12 @@ func (t *Tracee) processNetEvents() {
 
 			if t.config.DebugNet {
 				pktMeta := packetMeta{
+					TimeStamp: pkt.TimeStamp,
 					SrcIP:     netaddr.IPFrom16(pkt.SrcIP),
 					SrcPort:   pkt.SrcPort,
 					DestIP:    netaddr.IPFrom16(pkt.DestIP),
 					DestPort:  pkt.DestPort,
 					Protocol:  pkt.Protocol,
-					TimeStamp: pkt.TimeStamp,
 					Len:       pkt.Len,
 				}
 				fmt.Printf("%+v\n", pktMeta)
