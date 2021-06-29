@@ -423,15 +423,16 @@ typedef struct local_net_id {
 } local_net_id_t;
 
 struct net_packet_t {
+    uint64_t ts;
     u32 event_id;
     u32 len;
-    uint64_t ts;
     struct in6_addr src_addr, dst_addr;
     __be16 src_port, dst_port;
     u8 protocol;
 };
 
 struct net_debug_t {
+    uint64_t ts;
     u32 event_id;
     struct in6_addr local_addr, remote_addr;
     __be16 local_port, remote_port;
@@ -1957,6 +1958,7 @@ static __always_inline int net_map_update_or_delete_sock(void* ctx, int event_id
     // netDebug event
     if (get_config(CONFIG_DEBUG_NET)) {
         struct net_debug_t debug_event = {0};
+        debug_event.ts = bpf_ktime_get_ns();
         debug_event.event_id = event_id;
         debug_event.local_addr = connect_id.address;
         debug_event.local_port = connect_id.port;
@@ -3085,6 +3087,7 @@ int BPF_KPROBE(trace_security_socket_bind)
     // netDebug event
     if (get_config(CONFIG_DEBUG_NET)) {
         struct net_debug_t debug_event = {0};
+        debug_event.ts = bpf_ktime_get_ns();
         debug_event.event_id = DEBUG_NET_SECURITY_BIND;
         debug_event.local_addr = connect_id.address;
         debug_event.local_port = connect_id.port;
@@ -3220,6 +3223,7 @@ int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
 
     // netDebug event
     if (get_config(CONFIG_DEBUG_NET)) {
+        debug_event.ts = bpf_ktime_get_ns();
         debug_event.event_id = DEBUG_NET_INET_SOCK_SET_STATE;
         debug_event.old_state = old_state;
         debug_event.new_state = new_state;

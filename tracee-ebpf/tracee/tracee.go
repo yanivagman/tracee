@@ -1716,10 +1716,9 @@ func (t *Tracee) processNetEvents() {
 	}
 
 	//Todo:
-	// Add timestamp to other debug messages
+	// Add tid+comm to have context for debug messages (and for later split by context)
 	// Clean above structs - possibly having a dedicated inet_set_state debug message
 	// Verify debug messages make sense
-	// Add tid+comm to have context for debug messages (and for later split by context)
 	// Possibly: split pcap by context
 	// Add stats for network packets (in epilog)
 	// support syn+syn-ack packets
@@ -1727,13 +1726,14 @@ func (t *Tracee) processNetEvents() {
 	for {
 		select {
 		case in := <-t.netChannel:
-			// Sanity check - event id must exist in all net events
-			if len(in) < 4 {
+			// Sanity check - timestamp and event id must exist in all net events
+			if len(in) < 12 {
 				continue
 			}
 
-			netEventId := binary.LittleEndian.Uint32(in[0:4])
-			dataBuff := bytes.NewBuffer(in[4:])
+			timeStamp := binary.LittleEndian.Uint64(in[0:8])
+			netEventId := binary.LittleEndian.Uint32(in[8:12])
+			dataBuff := bytes.NewBuffer(in[12:])
 
 			if netEventId != 0 {
 				if t.config.DebugNet {
@@ -1745,32 +1745,38 @@ func (t *Tracee) processNetEvents() {
 					}
 					switch netEventId {
 					case DebugNetSecurityBind:
-						fmt.Printf("event: security_socket_bind, local_addr: %v, local_port: %d, protocol: %d\n",
+						fmt.Printf("TimeStamp: %d, event: security_socket_bind, local_addr: %v, local_port: %d, protocol: %d\n",
+							timeStamp,
 							netaddr.IPFrom16(pkt.LocalIP),
 							pkt.LocalPort,
 							pkt.Protocol)
 					case DebugNetUdpSendmsg:
-						fmt.Printf("event: udp_sendmsg, local_addr: %v, local_port: %d, protocol: %d\n",
+						fmt.Printf("TimeStamp: %d, event: udp_sendmsg, local_addr: %v, local_port: %d, protocol: %d\n",
+							timeStamp,
 							netaddr.IPFrom16(pkt.LocalIP),
 							pkt.LocalPort,
 							pkt.Protocol)
 					case DebugNetUdpDisconnect:
-						fmt.Printf("event: __udp_disconnect, local_addr: %v, local_port: %d, protocol: %d\n",
+						fmt.Printf("TimeStamp: %d, event: __udp_disconnect, local_addr: %v, local_port: %d, protocol: %d\n",
+							timeStamp,
 							netaddr.IPFrom16(pkt.LocalIP),
 							pkt.LocalPort,
 							pkt.Protocol)
 					case DebugNetUdpDestroySock:
-						fmt.Printf("event: udp_destroy_sock, local_addr: %v, local_port: %d, protocol: %d\n",
+						fmt.Printf("TimeStamp: %d, event: udp_destroy_sock, local_addr: %v, local_port: %d, protocol: %d\n",
+							timeStamp,
 							netaddr.IPFrom16(pkt.LocalIP),
 							pkt.LocalPort,
 							pkt.Protocol)
 					case DebugNetUdpV6DestroySock:
-						fmt.Printf("event: udpv6_destroy_sock, local_addr: %v, local_port: %d, protocol: %d\n",
+						fmt.Printf("TimeStamp: %d, event: udpv6_destroy_sock, local_addr: %v, local_port: %d, protocol: %d\n",
+							timeStamp,
 							netaddr.IPFrom16(pkt.LocalIP),
 							pkt.LocalPort,
 							pkt.Protocol)
 					case DebugNetInetSockSetState:
-						fmt.Printf("event: inet_sock_set_state, local_addr: %v, local_port: %d, remote_addr: %v, remote_port: %d, protocol: %d, old_state: %d, new_state: %d, sock_ptr: %x\n",
+						fmt.Printf("TimeStamp: %d, event: inet_sock_set_state, local_addr: %v, local_port: %d, remote_addr: %v, remote_port: %d, protocol: %d, old_state: %d, new_state: %d, sock_ptr: %x\n",
+							timeStamp,
 							netaddr.IPFrom16(pkt.LocalIP),
 							pkt.LocalPort,
 							netaddr.IPFrom16(pkt.RemoteIP),
@@ -1786,12 +1792,6 @@ func (t *Tracee) processNetEvents() {
 
 			var pktLen uint32
 			err := binary.Read(dataBuff, binary.LittleEndian, &pktLen)
-			if err != nil {
-				t.handleError(err)
-				continue
-			}
-			var timeStamp uint64
-			err = binary.Read(dataBuff, binary.LittleEndian, &timeStamp)
 			if err != nil {
 				t.handleError(err)
 				continue
