@@ -717,6 +717,7 @@ func (t *Tracee) populateBPFMaps() error {
 	bpfConfigMap.Update(uint32(configExtractDynCode), boolToUInt32(t.config.Capture.Mem))
 	bpfConfigMap.Update(uint32(configTraceePid), uint32(os.Getpid()))
 	bpfConfigMap.Update(uint32(configFollowFilter), boolToUInt32(t.config.Filter.Follow))
+	bpfConfigMap.Update(uint32(configDebugNet), boolToUInt32(t.config.DebugNet))
 
 	// Initialize tail calls program array
 	bpfProgArrayMap, _ := t.bpfModule.GetMap("prog_array")
@@ -1689,8 +1690,6 @@ func (t *Tracee) processNetEvents() {
 		DestPort  uint16
 		Protocol  uint8
 		_         [3]byte //padding
-		Len       uint32
-		TimeStamp uint64
 	}
 
 	type netDebugEvent struct {
@@ -1717,14 +1716,12 @@ func (t *Tracee) processNetEvents() {
 	}
 
 	//Todo:
-	// Clear metadata from packets (leave only timestamp+len)
 	// Add timestamp to other debug messages
 	// Clean above structs - possibly having a dedicated inet_set_state debug message
 	// Verify debug messages make sense
 	// Add tid+comm to have context for debug messages (and for later split by context)
 	// Possibly: split pcap by context
 	// Add stats for network packets (in epilog)
-	// if debug is not chosen - don't send messages from bpf code
 	// support syn+syn-ack packets
 	// make beautiful commits for PR
 	for {
@@ -1787,34 +1784,47 @@ func (t *Tracee) processNetEvents() {
 				continue
 			}
 
-			var pkt netEvent
-			err := binary.Read(dataBuff, binary.LittleEndian, &pkt)
+			var pktLen uint32
+			err := binary.Read(dataBuff, binary.LittleEndian, &pktLen)
+			if err != nil {
+				t.handleError(err)
+				continue
+			}
+			var timeStamp uint64
+			err = binary.Read(dataBuff, binary.LittleEndian, &timeStamp)
 			if err != nil {
 				t.handleError(err)
 				continue
 			}
 
 			if t.config.DebugNet {
+				var pkt netEvent
+				err = binary.Read(dataBuff, binary.LittleEndian, &pkt)
+				if err != nil {
+					t.handleError(err)
+					continue
+				}
+
 				pktMeta := packetMeta{
-					TimeStamp: pkt.TimeStamp,
+					TimeStamp: timeStamp,
 					SrcIP:     netaddr.IPFrom16(pkt.SrcIP),
 					SrcPort:   pkt.SrcPort,
 					DestIP:    netaddr.IPFrom16(pkt.DestIP),
 					DestPort:  pkt.DestPort,
 					Protocol:  pkt.Protocol,
-					Len:       pkt.Len,
+					Len:       pktLen,
 				}
 				fmt.Printf("%+v\n", pktMeta)
 			}
 
 			info := gopacket.CaptureInfo{
-				Timestamp:      time.Unix(0, int64(pkt.TimeStamp)),
-				CaptureLength:  int(pkt.Len),
-				Length:         int(pkt.Len),
+				Timestamp:      time.Unix(0, int64(timeStamp)),
+				CaptureLength:  int(pktLen),
+				Length:         int(pktLen),
 				InterfaceIndex: 0, // todo: accept array of interfaces?
 			}
 
-			err = t.pcapWriter.WritePacket(info, dataBuff.Bytes()[:pkt.Len])
+			err = t.pcapWriter.WritePacket(info, dataBuff.Bytes()[:pktLen])
 			if err != nil {
 				t.handleError(err)
 				continue

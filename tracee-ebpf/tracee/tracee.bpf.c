@@ -215,6 +215,7 @@ extern bool CONFIG_ARCH_HAS_SYSCALL_WRAPPER __kconfig;
 #define CONFIG_FOLLOW_FILTER        14
 #define CONFIG_NEW_PID_FILTER       15
 #define CONFIG_NEW_CONT_FILTER      16
+#define CONFIG_DEBUG_NET            17
 
 // get_config(CONFIG_XXX_FILTER) returns 0 if not enabled
 #define FILTER_IN  1
@@ -423,11 +424,11 @@ typedef struct local_net_id {
 
 struct net_packet_t {
     u32 event_id;
+    u32 len;
+    uint64_t ts;
     struct in6_addr src_addr, dst_addr;
     __be16 src_port, dst_port;
     u8 protocol;
-    u32 len;
-    uint64_t ts;
 };
 
 struct net_debug_t {
@@ -1954,12 +1955,14 @@ static __always_inline int net_map_update_or_delete_sock(void* ctx, int event_id
     }
 
     // netDebug event
-    struct net_debug_t debug_event = {0};
-    debug_event.event_id = event_id;
-    debug_event.local_addr = connect_id.address;
-    debug_event.local_port = connect_id.port;
-    debug_event.protocol = connect_id.protocol;
-    bpf_perf_event_output(ctx, &net_events, BPF_F_CURRENT_CPU, &debug_event, sizeof(debug_event));
+    if (get_config(CONFIG_DEBUG_NET)) {
+        struct net_debug_t debug_event = {0};
+        debug_event.event_id = event_id;
+        debug_event.local_addr = connect_id.address;
+        debug_event.local_port = connect_id.port;
+        debug_event.protocol = connect_id.protocol;
+        bpf_perf_event_output(ctx, &net_events, BPF_F_CURRENT_CPU, &debug_event, sizeof(debug_event));
+    }
 
     return 0;
 };
@@ -3080,12 +3083,14 @@ int BPF_KPROBE(trace_security_socket_bind)
     events_perf_submit(ctx);
 
     // netDebug event
-    struct net_debug_t debug_event = {0};
-    debug_event.event_id = DEBUG_NET_SECURITY_BIND;
-    debug_event.local_addr = connect_id.address;
-    debug_event.local_port = connect_id.port;
-    debug_event.protocol = protocol;
-    bpf_perf_event_output(ctx, &net_events, BPF_F_CURRENT_CPU, &debug_event, sizeof(debug_event));
+    if (get_config(CONFIG_DEBUG_NET)) {
+        struct net_debug_t debug_event = {0};
+        debug_event.event_id = DEBUG_NET_SECURITY_BIND;
+        debug_event.local_addr = connect_id.address;
+        debug_event.local_port = connect_id.port;
+        debug_event.protocol = protocol;
+        bpf_perf_event_output(ctx, &net_events, BPF_F_CURRENT_CPU, &debug_event, sizeof(debug_event));
+    }
 
     return 0;
 };
@@ -3214,12 +3219,14 @@ int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
     }
 
     // netDebug event
-    debug_event.event_id = DEBUG_NET_INET_SOCK_SET_STATE;
-    debug_event.old_state = old_state;
-    debug_event.new_state = new_state;
-    debug_event.sk_ptr = (u64)sk;
-    debug_event.protocol = connect_id.protocol;
-    bpf_perf_event_output(ctx, &net_events, BPF_F_CURRENT_CPU, &debug_event, sizeof(debug_event));
+    if (get_config(CONFIG_DEBUG_NET)) {
+        debug_event.event_id = DEBUG_NET_INET_SOCK_SET_STATE;
+        debug_event.old_state = old_state;
+        debug_event.new_state = new_state;
+        debug_event.sk_ptr = (u64)sk;
+        debug_event.protocol = connect_id.protocol;
+        bpf_perf_event_output(ctx, &net_events, BPF_F_CURRENT_CPU, &debug_event, sizeof(debug_event));
+    }
 
     return 0;
 }
@@ -3919,7 +3926,12 @@ static __always_inline int tc_probe(struct __sk_buff *skb, bool ingress) {
      */
     u64 flags = BPF_F_CURRENT_CPU;
     flags |= (u64)skb->len << 32;
-    bpf_perf_event_output(skb, &net_events, flags, &pkt, sizeof(pkt));
+    if (get_config(CONFIG_DEBUG_NET))
+        bpf_perf_event_output(skb, &net_events, flags, &pkt, sizeof(pkt));
+    else
+        // If not debuggin, only send the minimal required data to save the packet.
+        // This will be the net event_id (u32), packet len (u32), and timestamp (u64)
+        bpf_perf_event_output(skb, &net_events, flags, &pkt, 16);
 
     return TC_ACT_OK;
 }

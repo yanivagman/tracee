@@ -31,6 +31,7 @@ const (
 	configFollowFilter
 	configNewPidFilter
 	configNewContFilter
+	configDebugNet
 )
 
 const (
