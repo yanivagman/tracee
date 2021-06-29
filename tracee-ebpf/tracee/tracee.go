@@ -1702,6 +1702,8 @@ func (t *Tracee) processNetEvents() {
 		_           [3]byte //padding
 		TcpOldState uint32
 		TcpNewState uint32
+		_           [4]byte //padding
+		SockPtr     uint64
 	}
 
 	type packetMeta struct {
@@ -1760,14 +1762,15 @@ func (t *Tracee) processNetEvents() {
 							pkt.LocalPort,
 							pkt.Protocol)
 					case DebugNetInetSockSetState:
-						fmt.Printf("event: inet_sock_set_state, local_addr: %v, local_port: %d, remote_addr: %v, remote_port: %d, protocol: %d, old_state: %d, new_state: %d\n",
+						fmt.Printf("event: inet_sock_set_state, local_addr: %v, local_port: %d, remote_addr: %v, remote_port: %d, protocol: %d, old_state: %d, new_state: %d, sock_ptr: %x\n",
 							netaddr.IPFrom16(pkt.LocalIP),
 							pkt.LocalPort,
 							netaddr.IPFrom16(pkt.RemoteIP),
 							pkt.RemotePort,
 							pkt.Protocol,
 							pkt.TcpOldState,
-							pkt.TcpNewState)
+							pkt.TcpNewState,
+							pkt.SockPtr)
 					}
 				}
 				continue

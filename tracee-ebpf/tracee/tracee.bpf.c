@@ -435,8 +435,9 @@ struct net_debug_t {
     struct in6_addr local_addr, remote_addr;
     __be16 local_port, remote_port;
     u8 protocol;
-    int tcp_old_state;
-    int tcp_new_state;
+    int old_state;
+    int new_state;
+    u64 sk_ptr;
 };
 
 
@@ -3140,59 +3141,29 @@ SEC("raw_tracepoint/inet_sock_set_state")
 int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
 {
     local_net_id_t connect_id = {0};
-    local_net_id_t *connect_id_p;
-
     struct net_debug_t debug_event = {0};
-    debug_event.event_id = DEBUG_NET_INET_SOCK_SET_STATE;
 
     struct sock *sk = (struct sock *)ctx->args[0];
     int old_state = ctx->args[1];
     int new_state = ctx->args[2];
 
-    u64 pointer_address = (u64)sk;
-
     // Sometimes the socket state may be changed by other contexts that handle the tcp network stack (e.g. network driver).
     // In these cases, we won't pass the should_trace() check.
     // To overcome this problem, we save the socket pointer in sock_ptr_map in states that we observed to have the correct context.
     // We can then check for the existence of a socket in the map, and continue if it was traced before.
-    connect_id_p = bpf_map_lookup_elem(&sock_ptr_map, &pointer_address);
+    local_net_id_t *connect_id_p = bpf_map_lookup_elem(&sock_ptr_map, &sk);
     if (!connect_id_p) {
         if (!should_trace()) {
             return 0;
         }
     }
 
-//    buf_t *submit_p = get_buf(SUBMIT_BUF_IDX);
-//    if (submit_p == NULL)
-//        return 0;
-//    set_buf_off(SUBMIT_BUF_IDX, sizeof(context_t));
-//
-//    context_t context = init_and_save_context(ctx, submit_p, INET_SOCK_SET_STATE, 7 /*argnum*/, 0 /*ret*/);
-//
-//    // getting event tags
-//    u64 *tags = bpf_map_lookup_elem(&params_names_map, &context.eventid);
-//    if (!tags) {
-//        return -1;
-//    }
-//
-//    save_to_submit_buf(submit_p, (void *)&old_state, sizeof(int), INT_T, DEC_ARG(0, *tags));
-//    save_to_submit_buf(submit_p, (void *)&new_state, sizeof(int), INT_T, DEC_ARG(1, *tags));
-
     u16 family = get_sock_family(sk);
 
     if (family == AF_INET) {
         net_conn_v4_t net_details = {};
         get_network_details_from_sock_v4(sk, &net_details, 0);
-
-//        struct sockaddr_in local;
-//        get_local_sockaddr_in_from_network_details(&local, &net_details, family);
-//
-//        save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(2, *tags));
-//
-//        struct sockaddr_in remote;
-//        get_remote_sockaddr_in_from_network_details(&remote, &net_details, family);
-//
-//        save_to_submit_buf(submit_p, (void *)&remote, sizeof(struct sockaddr_in), SOCKADDR_T, DEC_ARG(3, *tags));
+        get_local_net_id_from_network_details_v4(sk, &connect_id, &net_details, family);
 
         debug_event.local_addr.s6_addr32[3] = net_details.local_address;
         debug_event.local_addr.s6_addr16[5] = 0xffff;
@@ -3200,28 +3171,15 @@ int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
         debug_event.remote_addr.s6_addr32[3] = net_details.remote_address;
         debug_event.remote_addr.s6_addr16[5] = 0xffff;
         debug_event.remote_port = net_details.remote_port;
-
-        get_local_net_id_from_network_details_v4(sk, &connect_id, &net_details, family);
     } else if (family == AF_INET6) {
         net_conn_v6_t net_details = {};
         get_network_details_from_sock_v6(sk, &net_details, 0);
-
-//        struct sockaddr_in6 local;
-//        get_local_sockaddr_in6_from_network_details(&local, &net_details, family);
-//
-//        save_to_submit_buf(submit_p, (void *)&local, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(2, *tags));
-//
-//        struct sockaddr_in6 remote;
-//        get_remote_sockaddr_in6_from_network_details(&remote, &net_details, family);
-//
-//        save_to_submit_buf(submit_p, (void *)&remote, sizeof(struct sockaddr_in6), SOCKADDR_T, DEC_ARG(3, *tags));
+        get_local_net_id_from_network_details_v6(sk, &connect_id, &net_details, family);
 
         debug_event.local_addr = net_details.local_address;
         debug_event.local_port = net_details.local_port;
         debug_event.remote_addr = net_details.remote_address;
         debug_event.remote_port = net_details.remote_port;
-
-        get_local_net_id_from_network_details_v6(sk, &connect_id, &net_details, family);
     } else {
         return 0;
     }
@@ -3236,7 +3194,7 @@ int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
     // and save the socket in sock_ptr_map so we can avoid performing the should_trace() check
     // Note that in this state, the port equals to 0, so we don't update the network_map here
     if (new_state == TCP_SYN_SENT) {
-        bpf_map_update_elem(&sock_ptr_map, &pointer_address, connect_id_p, BPF_ANY);
+        bpf_map_update_elem(&sock_ptr_map, &sk, connect_id_p, BPF_ANY);
     }
 
     if (connect_id_p->port) {
@@ -3245,22 +3203,21 @@ int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
         // the change to the 'TCP_ESTABLISHED' state of the server's socket doesn't happen in the (process) context of the server.
         // To update the network_map correctly in that case, we use the 'TCP_LISTEN' state.
         if (new_state == TCP_LISTEN || new_state == TCP_ESTABLISHED) {
-            bpf_map_update_elem(&sock_ptr_map, &pointer_address, connect_id_p, BPF_ANY);
+            bpf_map_update_elem(&sock_ptr_map, &sk, connect_id_p, BPF_ANY);
             u32 tid = bpf_get_current_pid_tgid();
             bpf_map_update_elem(&network_map, connect_id_p, &tid, BPF_ANY);
         }
         else if (new_state == TCP_CLOSE) {
-            bpf_map_delete_elem(&sock_ptr_map, &pointer_address);
+            bpf_map_delete_elem(&sock_ptr_map, &sk);
             bpf_map_delete_elem(&network_map, connect_id_p);
         }
     }
-//     save_to_submit_buf(submit_p, (void *)&old_state, sizeof(int), INT_T, DEC_ARG(4, *tags));
-//     save_to_submit_buf(submit_p, (void *)&new_state, sizeof(int), INT_T, DEC_ARG(5, *tags));
-//     save_to_submit_buf(submit_p, (void *)&pointer_address, sizeof(int), INT_T, DEC_ARG(6, *tags));
-//
-//     events_perf_submit(ctx);
 
     // netDebug event
+    debug_event.event_id = DEBUG_NET_INET_SOCK_SET_STATE;
+    debug_event.old_state = old_state;
+    debug_event.new_state = new_state;
+    debug_event.sk_ptr = (u64)sk;
     debug_event.protocol = connect_id.protocol;
     bpf_perf_event_output(ctx, &net_events, BPF_F_CURRENT_CPU, &debug_event, sizeof(debug_event));
 
