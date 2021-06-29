@@ -1682,55 +1682,80 @@ func (t *Tracee) processFileWrites() {
 }
 
 func (t *Tracee) processNetEvents() {
-	type packet struct {
-		SrcIP     netaddr.IP
+	type netEvent struct {
+		SrcIP     [16]byte
+		DestIP    [16]byte
 		SrcPort   uint16
-		DestIP    netaddr.IP
 		DestPort  uint16
 		Protocol  uint8
+		_         [3]byte //padding
+		Len       uint32
 		TimeStamp uint64
+	}
+
+	type packetMeta struct {
+		SrcIP       netaddr.IP
+		SrcPort     uint16
+		DestIP      netaddr.IP
+		DestPort    uint16
+		Protocol    uint8
+		Len         uint32
+		TimeStamp   uint64
 	}
 
 	for {
 		select {
 		case in := <-t.netChannel:
-			// Sanity check - packet metadata is 48 bytes
-			if len(in) < 56 {
-				return
+			// Sanity check - event id must exist in all net events
+			if len(in) < 4 {
+				continue
 			}
-			var srcAddr, dstAddr [16]byte
-			copy(srcAddr[:], in[4:20])
-			copy(dstAddr[:], in[20:36])
 
-			pkt := packet{
-				SrcIP:    netaddr.IPFrom16(srcAddr),
-				DestIP:   netaddr.IPFrom16(dstAddr),
-				SrcPort:  binary.BigEndian.Uint16(in[36:38]),
-				DestPort: binary.BigEndian.Uint16(in[38:40]),
-				Protocol: uint8(in[40]),
-				// Offset of 7 bytes as struct is 64-bit aligned.
-				TimeStamp: binary.LittleEndian.Uint64(in[48:56]),
+			netEventId := binary.LittleEndian.Uint32(in[0:4])
+
+			if netEventId != 0 {
+				continue
 			}
-			//if t.config.DebugNet {
-				fmt.Printf("%+v, size: %d\n", pkt, len(in[56:]))
-			//}
+
+			dataBuff := bytes.NewBuffer(in[4:])
+			var pkt netEvent
+			err := binary.Read(dataBuff, binary.LittleEndian, &pkt)
+			if err != nil {
+				t.handleError(err)
+				continue
+			}
+
+			if t.config.DebugNet {
+				pktMeta := packetMeta{
+					SrcIP:     netaddr.IPFrom16(pkt.SrcIP),
+					SrcPort:   pkt.SrcPort,
+					DestIP:    netaddr.IPFrom16(pkt.DestIP),
+					DestPort:  pkt.DestPort,
+					Protocol:  pkt.Protocol,
+					TimeStamp: pkt.TimeStamp,
+					Len:       pkt.Len,
+				}
+				fmt.Printf("%+v\n", pktMeta)
+			}
 
 			info := gopacket.CaptureInfo{
 				Timestamp:      time.Unix(0, int64(pkt.TimeStamp)),
-				CaptureLength:  len(in[56:]),
-				Length:         len(in[56:]),
+				CaptureLength:  int(pkt.Len),
+				Length:         int(pkt.Len),
 				InterfaceIndex: 0, // todo: accept array of interfaces?
 			}
 
-			err := t.pcapWriter.WritePacket(info, in[56:])
+			err = t.pcapWriter.WritePacket(info, dataBuff.Bytes()[:pkt.Len])
 			if err != nil {
-				fmt.Fprintln(os.Stderr, "Error writing packet:", err)
+				t.handleError(err)
+				continue
 			}
 
 			// todo: maybe we should not flush every packet?
 			err = t.pcapWriter.Flush()
 			if err != nil {
-				fmt.Fprintln(os.Stderr, "Error flushing data:", err)
+				t.handleError(err)
+				continue
 			}
 
 		case lost := <-t.lostNetChannel:
