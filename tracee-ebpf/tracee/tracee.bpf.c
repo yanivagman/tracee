@@ -490,8 +490,8 @@ BPF_HASH(sys_32_to_64_map, u32, u32);                   // Map 32bit syscalls nu
 BPF_HASH(params_types_map, u32, u64);                   // Encoded parameters types for event
 BPF_HASH(params_names_map, u32, u64);                   // Encoded parameters names for event
 BPF_HASH(sockfd_map, u32, u32);                         // Persist sockfd from syscalls to be used in the corresponding lsm hooks
-BPF_HASH(sock_ptr_map, u64, local_net_id_t);            // sock address to network identifier
-BPF_LRU_HASH(network_map, local_net_id_t, net_ctx_t);   // network identifier to context
+BPF_HASH(sock_ctx_map, u64, net_ctx_t);                 // Socket address to process context
+BPF_LRU_HASH(network_map, local_net_id_t, net_ctx_t);   // Network identifier to process context
 BPF_ARRAY(file_filter, path_filter_t, 3);               // Used to filter vfs_write events
 BPF_ARRAY(string_store, path_filter_t, 1);              // Store strings from userspace
 BPF_PERCPU_ARRAY(bufs, buf_t, MAX_BUFFERS);             // Percpu global buffer variables
@@ -3175,10 +3175,10 @@ int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
 
     // Sometimes the socket state may be changed by other contexts that handle the tcp network stack (e.g. network driver).
     // In these cases, we won't pass the should_trace() check.
-    // To overcome this problem, we save the socket pointer in sock_ptr_map in states that we observed to have the correct context.
+    // To overcome this problem, we save the socket pointer in sock_ctx_map in states that we observed to have the correct context.
     // We can then check for the existence of a socket in the map, and continue if it was traced before.
-    local_net_id_t *connect_id_p = bpf_map_lookup_elem(&sock_ptr_map, &sk);
-    if (!connect_id_p) {
+    net_ctx_t *sock_ctx_p = bpf_map_lookup_elem(&sock_ctx_map, &sk);
+    if (!sock_ctx_p) {
         if (!should_trace()) {
             return 0;
         }
@@ -3213,10 +3213,13 @@ int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
     // When we have an outgoing network connection to a remote server, we get 'TCP_ESTABLISHED' with a context
     // which is different from the client's context.
     // We use 'TCP_SYN_SENT' state change, which we observed to always happen in the correct context,
-    // and save the socket in sock_ptr_map so we can avoid performing the should_trace() check
+    // and save the socket in sock_ctx_map so we can avoid performing the should_trace() check
     // Note that in this state, the port equals to 0, so we don't update the network_map here
     if (new_state == TCP_SYN_SENT) {
-        bpf_map_update_elem(&sock_ptr_map, &sk, &connect_id, BPF_ANY);
+        net_ctx_t net_ctx;
+        net_ctx.host_tid = bpf_get_current_pid_tgid();
+        bpf_get_current_comm(&net_ctx.comm, sizeof(net_ctx.comm));
+        bpf_map_update_elem(&sock_ctx_map, &sk, &net_ctx, BPF_ANY);
     }
 
     if (connect_id.port) {
@@ -3225,14 +3228,18 @@ int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
         // the change to the 'TCP_ESTABLISHED' state of the server's socket doesn't happen in the (process) context of the server.
         // To update the network_map correctly in that case, we use the 'TCP_LISTEN' state.
         if (new_state == TCP_LISTEN || new_state == TCP_ESTABLISHED) {
-            bpf_map_update_elem(&sock_ptr_map, &sk, &connect_id, BPF_ANY);
-            net_ctx_t net_ctx;
-            net_ctx.host_tid = bpf_get_current_pid_tgid();
-            bpf_get_current_comm(&net_ctx.comm, sizeof(net_ctx.comm));
-            bpf_map_update_elem(&network_map, &connect_id, &net_ctx, BPF_ANY);
+            if (!sock_ctx_p) {
+                net_ctx_t net_ctx;
+                net_ctx.host_tid = bpf_get_current_pid_tgid();
+                bpf_get_current_comm(&net_ctx.comm, sizeof(net_ctx.comm));
+                bpf_map_update_elem(&sock_ctx_map, &sk, &net_ctx, BPF_ANY);
+                bpf_map_update_elem(&network_map, &connect_id, &net_ctx, BPF_ANY);
+            } else {
+                bpf_map_update_elem(&network_map, &connect_id, sock_ctx_p, BPF_ANY);
+            }
         }
         else if (new_state == TCP_CLOSE) {
-            bpf_map_delete_elem(&sock_ptr_map, &sk);
+            bpf_map_delete_elem(&sock_ctx_map, &sk);
             bpf_map_delete_elem(&network_map, &connect_id);
         }
     }
@@ -3240,8 +3247,13 @@ int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
     // netDebug event
     if (get_config(CONFIG_DEBUG_NET)) {
         debug_event.ts = bpf_ktime_get_ns();
-        debug_event.host_tid = bpf_get_current_pid_tgid();
-        bpf_get_current_comm(&debug_event.comm, sizeof(debug_event.comm));
+        if (!sock_ctx_p) {
+            debug_event.host_tid = bpf_get_current_pid_tgid();
+            bpf_get_current_comm(&debug_event.comm, sizeof(debug_event.comm));
+        } else {
+            debug_event.host_tid = sock_ctx_p->host_tid;
+            __builtin_memcpy(debug_event.comm, sock_ctx_p->comm, TASK_COMM_LEN);
+        }
         debug_event.event_id = DEBUG_NET_INET_SOCK_SET_STATE;
         debug_event.old_state = old_state;
         debug_event.new_state = new_state;
