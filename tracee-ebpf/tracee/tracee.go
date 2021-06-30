@@ -1679,12 +1679,10 @@ func (t *Tracee) processFileWrites() {
 }
 
 func (t *Tracee) processNetEvents() {
-	//Todo:
-	// Add tid+comm to have context for debug messages (and for later split by context)
-	// Possibly: split pcap by context
-	// Add stats for network packets (in epilog)
-	// support syn+syn-ack packets
 	// make beautiful commits for PR
+	// Todo: split pcap files by context (tid + comm)
+	// Todo: add stats for network packets (in epilog)
+	// Todo: support syn+syn-ack packets
 	for {
 		select {
 		case in := <-t.netChannel:
@@ -1722,10 +1720,10 @@ func (t *Tracee) processNetEvents() {
 						continue
 					}
 
-					fmt.Printf("TimeStamp: %d, Event: packet, Tid: %d, Comm: %s, Len: %d, SrcIP: %v, SrcPort: %d, DestIP: %v, DestPort: %d, Protocol: %d\n",
-						timeStamp,
-						hostTid,
+					fmt.Printf("%f  %-16s  %-7d  packet               Len: %d, SrcIP: %v, SrcPort: %d, DestIP: %v, DestPort: %d, Protocol: %d\n",
+						float64(timeStamp) / 1000000.0,
 						comm,
+						hostTid,
 						pktLen,
 						netaddr.IPFrom16(pktMeta.SrcIP),
 						pktMeta.SrcPort,
@@ -1773,25 +1771,25 @@ func (t *Tracee) processNetEvents() {
 				}
 				switch netEventId {
 				case DebugNetSecurityBind:
-					fmt.Printf("TimeStamp: %d, Event: security_socket_bind, Tid: %d, Comm: %s, LocalIP: %v, LocalPort: %d, Protocol: %d\n",
-						timeStamp, hostTid, comm, netaddr.IPFrom16(pkt.LocalIP), pkt.LocalPort, pkt.Protocol)
+					fmt.Printf("%f  %-16s  %-7d  security_socket_bind LocalIP: %v, LocalPort: %d, Protocol: %d\n",
+						float64(timeStamp) / 1000000.0, comm, hostTid, netaddr.IPFrom16(pkt.LocalIP), pkt.LocalPort, pkt.Protocol)
 				case DebugNetUdpSendmsg:
-					fmt.Printf("TimeStamp: %d, Event: udp_sendmsg, Tid: %d, Comm: %s, LocalIP: %v, LocalPort: %d, Protocol: %d\n",
-						timeStamp, hostTid, comm, netaddr.IPFrom16(pkt.LocalIP), pkt.LocalPort, pkt.Protocol)
+					fmt.Printf("%f  %-16s  %-7d  udp_sendmsg          LocalIP: %v, LocalPort: %d, Protocol: %d\n",
+						float64(timeStamp) / 1000000.0, comm, hostTid, netaddr.IPFrom16(pkt.LocalIP), pkt.LocalPort, pkt.Protocol)
 				case DebugNetUdpDisconnect:
-					fmt.Printf("TimeStamp: %d, Event: __udp_disconnect, Tid: %d, Comm: %s, LocalIP: %v, LocalPort: %d, Protocol: %d\n",
-						timeStamp, hostTid, comm, netaddr.IPFrom16(pkt.LocalIP), pkt.LocalPort, pkt.Protocol)
+					fmt.Printf("%f  %-16s  %-7d  __udp_disconnect     LocalIP: %v, LocalPort: %d, Protocol: %d\n",
+						float64(timeStamp) / 1000000.0, comm, hostTid, netaddr.IPFrom16(pkt.LocalIP), pkt.LocalPort, pkt.Protocol)
 				case DebugNetUdpDestroySock:
-					fmt.Printf("TimeStamp: %d, Event: udp_destroy_sock, Tid: %d, Comm: %s, LocalIP: %v, LocalPort: %d, Protocol: %d\n",
-						timeStamp, hostTid, comm, netaddr.IPFrom16(pkt.LocalIP), pkt.LocalPort, pkt.Protocol)
+					fmt.Printf("%f  %-16s  %-7d  udp_destroy_sock     LocalIP: %v, LocalPort: %d, Protocol: %d\n",
+						float64(timeStamp) / 1000000.0, comm, hostTid, netaddr.IPFrom16(pkt.LocalIP), pkt.LocalPort, pkt.Protocol)
 				case DebugNetUdpV6DestroySock:
-					fmt.Printf("TimeStamp: %d, Event: udpv6_destroy_sock, Tid: %d, Comm: %s, LocalIP: %v, LocalPort: %d, Protocol: %d\n",
-						timeStamp, hostTid, comm, netaddr.IPFrom16(pkt.LocalIP), pkt.LocalPort, pkt.Protocol)
+					fmt.Printf("%f  %-16s  %-7d  udpv6_destroy_sock   LocalIP: %v, LocalPort: %d, Protocol: %d\n",
+						float64(timeStamp) / 1000000.0, comm, hostTid, netaddr.IPFrom16(pkt.LocalIP), pkt.LocalPort, pkt.Protocol)
 				case DebugNetInetSockSetState:
-					fmt.Printf("TimeStamp: %d, Event: inet_sock_set_state, Tid: %d, Comm: %s, LocalIP: %v, LocalPort: %d, RemoteIP: %v, RemotePort: %d, Protocol: %d, OldState: %d, NewState: %d, SockPtr: 0x%x\n",
-						timeStamp,
-						hostTid,
+					fmt.Printf("%f  %-16s  %-7d  inet_sock_set_state  LocalIP: %v, LocalPort: %d, RemoteIP: %v, RemotePort: %d, Protocol: %d, OldState: %d, NewState: %d, SockPtr: 0x%x\n",
+						float64(timeStamp) / 1000000.0,
 						comm,
+						hostTid,
 						netaddr.IPFrom16(pkt.LocalIP),
 						pkt.LocalPort,
 						netaddr.IPFrom16(pkt.RemoteIP),

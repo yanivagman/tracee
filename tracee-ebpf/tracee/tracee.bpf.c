@@ -383,22 +383,6 @@ typedef struct alert {
     u8 payload; // Non zero if payload is sent to userspace
 } alert_t;
 
-typedef struct network_connection_v4 {
-    u32 local_address;
-    u16 local_port;
-    u32 remote_address;
-    u16 remote_port;
-} net_conn_v4_t;
-
-typedef struct network_connection_v6 {
-    struct in6_addr local_address;
-    u16 local_port;
-    struct in6_addr remote_address;
-    u16 remote_port;
-    u32 flowinfo;
-    u32 scope_id;
-} net_conn_v6_t;
-
 // For a good summary about capabilities, see https://lwn.net/Articles/636533/
 typedef struct slim_cred {
     uid_t  uid;             /* real UID of the task */
@@ -415,6 +399,22 @@ typedef struct slim_cred {
     u64    cap_bset;        /* capability bounding set */
     u64    cap_ambient;     /* Ambient capability set */
 } slim_cred_t;
+
+typedef struct network_connection_v4 {
+    u32 local_address;
+    u16 local_port;
+    u32 remote_address;
+    u16 remote_port;
+} net_conn_v4_t;
+
+typedef struct network_connection_v6 {
+    struct in6_addr local_address;
+    u16 local_port;
+    struct in6_addr remote_address;
+    u16 remote_port;
+    u32 flowinfo;
+    u32 scope_id;
+} net_conn_v6_t;
 
 typedef struct local_net_id {
     struct in6_addr address;
@@ -3058,7 +3058,7 @@ int BPF_KPROBE(trace_security_socket_bind)
     // netDebug event
     if (get_config(CONFIG_DEBUG_NET)) {
         net_debug_t debug_event = {0};
-        debug_event.ts = bpf_ktime_get_ns();
+        debug_event.ts = bpf_ktime_get_ns()/1000;
         debug_event.host_tid = context.host_tid;
         __builtin_memcpy(debug_event.comm, context.comm, TASK_COMM_LEN);
         debug_event.event_id = DEBUG_NET_SECURITY_BIND;
@@ -3103,7 +3103,7 @@ static __always_inline int net_map_update_or_delete_sock(void* ctx, int event_id
     // netDebug event
     if (get_config(CONFIG_DEBUG_NET)) {
         net_debug_t debug_event = {0};
-        debug_event.ts = bpf_ktime_get_ns();
+        debug_event.ts = bpf_ktime_get_ns()/1000;
         debug_event.host_tid = bpf_get_current_pid_tgid();
         bpf_get_current_comm(&debug_event.comm, sizeof(debug_event.comm));
         debug_event.event_id = event_id;
@@ -3246,7 +3246,7 @@ int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
 
     // netDebug event
     if (get_config(CONFIG_DEBUG_NET)) {
-        debug_event.ts = bpf_ktime_get_ns();
+        debug_event.ts = bpf_ktime_get_ns()/1000;
         if (!sock_ctx_p) {
             debug_event.host_tid = bpf_get_current_pid_tgid();
             bpf_get_current_comm(&debug_event.comm, sizeof(debug_event.comm));
@@ -3852,7 +3852,7 @@ static __always_inline int tc_probe(struct __sk_buff *skb, bool ingress) {
 
     struct ethhdr *eth = (void *)head;
     net_packet_t pkt = {0};
-    pkt.ts = bpf_ktime_get_ns();
+    pkt.ts = bpf_ktime_get_ns()/1000;
     pkt.len = skb->len;
     local_net_id_t connect_id = {0};
 
