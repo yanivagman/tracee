@@ -1688,14 +1688,16 @@ func (t *Tracee) processNetEvents() {
 	for {
 		select {
 		case in := <-t.netChannel:
-			// Sanity check - timestamp and event id must exist in all net events
-			if len(in) < 12 {
+			// Sanity check - timestamp, event id, host tid and comm must exist in all net events
+			if len(in) < 32 {
 				continue
 			}
 
 			timeStamp := binary.LittleEndian.Uint64(in[0:8])
 			netEventId := binary.LittleEndian.Uint32(in[8:12])
-			dataBuff := bytes.NewBuffer(in[12:])
+			hostTid := binary.LittleEndian.Uint32(in[12:16])
+			comm := string(bytes.TrimRight(in[16:32], "\x00"))
+			dataBuff := bytes.NewBuffer(in[32:])
 
 			if netEventId == NetPacket {
 				var pktLen uint32
@@ -1712,7 +1714,7 @@ func (t *Tracee) processNetEvents() {
 						SrcPort  uint16
 						DestPort uint16
 						Protocol uint8
-						_        [3]byte //padding
+						_        [7]byte //padding
 					}
 					err = binary.Read(dataBuff, binary.LittleEndian, &pktMeta)
 					if err != nil {
@@ -1720,8 +1722,10 @@ func (t *Tracee) processNetEvents() {
 						continue
 					}
 
-					fmt.Printf("TimeStamp: %d, Event: packet, Len: %d, SrcIP: %v, SrcPort: %d, DestIP: %v, DestPort: %d, Protocol: %d\n",
+					fmt.Printf("TimeStamp: %d, Event: packet, Tid: %d, Comm: %s, Len: %d, SrcIP: %v, SrcPort: %d, DestIP: %v, DestPort: %d, Protocol: %d\n",
 						timeStamp,
+						hostTid,
+						comm,
 						pktLen,
 						netaddr.IPFrom16(pktMeta.SrcIP),
 						pktMeta.SrcPort,
@@ -1769,23 +1773,25 @@ func (t *Tracee) processNetEvents() {
 				}
 				switch netEventId {
 				case DebugNetSecurityBind:
-					fmt.Printf("TimeStamp: %d, Event: security_socket_bind, LocalIP: %v, LocalPort: %d, Protocol: %d\n",
-						timeStamp, netaddr.IPFrom16(pkt.LocalIP), pkt.LocalPort, pkt.Protocol) 
+					fmt.Printf("TimeStamp: %d, Event: security_socket_bind, Tid: %d, Comm: %s, LocalIP: %v, LocalPort: %d, Protocol: %d\n",
+						timeStamp, hostTid, comm, netaddr.IPFrom16(pkt.LocalIP), pkt.LocalPort, pkt.Protocol)
 				case DebugNetUdpSendmsg:
-					fmt.Printf("TimeStamp: %d, Event: udp_sendmsg, LocalIP: %v, LocalPort: %d, Protocol: %d\n",
-						timeStamp, netaddr.IPFrom16(pkt.LocalIP), pkt.LocalPort, pkt.Protocol)
+					fmt.Printf("TimeStamp: %d, Event: udp_sendmsg, Tid: %d, Comm: %s, LocalIP: %v, LocalPort: %d, Protocol: %d\n",
+						timeStamp, hostTid, comm, netaddr.IPFrom16(pkt.LocalIP), pkt.LocalPort, pkt.Protocol)
 				case DebugNetUdpDisconnect:
-					fmt.Printf("TimeStamp: %d, Event: __udp_disconnect, LocalIP: %v, LocalPort: %d, Protocol: %d\n",
-						timeStamp, netaddr.IPFrom16(pkt.LocalIP), pkt.LocalPort, pkt.Protocol)
+					fmt.Printf("TimeStamp: %d, Event: __udp_disconnect, Tid: %d, Comm: %s, LocalIP: %v, LocalPort: %d, Protocol: %d\n",
+						timeStamp, hostTid, comm, netaddr.IPFrom16(pkt.LocalIP), pkt.LocalPort, pkt.Protocol)
 				case DebugNetUdpDestroySock:
-					fmt.Printf("TimeStamp: %d, Event: udp_destroy_sock, LocalIP: %v, LocalPort: %d, Protocol: %d\n",
-						timeStamp, netaddr.IPFrom16(pkt.LocalIP), pkt.LocalPort, pkt.Protocol)
+					fmt.Printf("TimeStamp: %d, Event: udp_destroy_sock, Tid: %d, Comm: %s, LocalIP: %v, LocalPort: %d, Protocol: %d\n",
+						timeStamp, hostTid, comm, netaddr.IPFrom16(pkt.LocalIP), pkt.LocalPort, pkt.Protocol)
 				case DebugNetUdpV6DestroySock:
-					fmt.Printf("TimeStamp: %d, Event: udpv6_destroy_sock, LocalIP: %v, LocalPort: %d, Protocol: %d\n",
-						timeStamp, netaddr.IPFrom16(pkt.LocalIP), pkt.LocalPort, pkt.Protocol)
+					fmt.Printf("TimeStamp: %d, Event: udpv6_destroy_sock, Tid: %d, Comm: %s, LocalIP: %v, LocalPort: %d, Protocol: %d\n",
+						timeStamp, hostTid, comm, netaddr.IPFrom16(pkt.LocalIP), pkt.LocalPort, pkt.Protocol)
 				case DebugNetInetSockSetState:
-					fmt.Printf("TimeStamp: %d, Event: inet_sock_set_state, LocalIP: %v, LocalPort: %d, RemoteIP: %v, RemotePort: %d, Protocol: %d, OldState: %d, NewState: %d, SockPtr: 0x%x\n",
+					fmt.Printf("TimeStamp: %d, Event: inet_sock_set_state, Tid: %d, Comm: %s, LocalIP: %v, LocalPort: %d, RemoteIP: %v, RemotePort: %d, Protocol: %d, OldState: %d, NewState: %d, SockPtr: 0x%x\n",
 						timeStamp,
+						hostTid,
+						comm,
 						netaddr.IPFrom16(pkt.LocalIP),
 						pkt.LocalPort,
 						netaddr.IPFrom16(pkt.RemoteIP),

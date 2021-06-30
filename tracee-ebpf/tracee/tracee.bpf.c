@@ -422,26 +422,34 @@ typedef struct local_net_id {
     u16 protocol;
 } local_net_id_t;
 
-struct net_packet_t {
+typedef struct net_packet {
     uint64_t ts;
     u32 event_id;
+    u32 host_tid;
+    char comm[TASK_COMM_LEN];
     u32 len;
     struct in6_addr src_addr, dst_addr;
     __be16 src_port, dst_port;
     u8 protocol;
-};
+} net_packet_t;
 
-struct net_debug_t {
+typedef struct net_debug {
     uint64_t ts;
     u32 event_id;
+    u32 host_tid;
+    char comm[TASK_COMM_LEN];
     struct in6_addr local_addr, remote_addr;
     __be16 local_port, remote_port;
     u8 protocol;
     int old_state;
     int new_state;
     u64 sk_ptr;
-};
+} net_debug_t;
 
+typedef struct net_ctx {
+    u32 host_tid;
+    char comm[TASK_COMM_LEN];
+} net_ctx_t;
 
 /*================================ KERNEL STRUCTS =============================*/
 
@@ -483,7 +491,7 @@ BPF_HASH(params_types_map, u32, u64);                   // Encoded parameters ty
 BPF_HASH(params_names_map, u32, u64);                   // Encoded parameters names for event
 BPF_HASH(sockfd_map, u32, u32);                         // Persist sockfd from syscalls to be used in the corresponding lsm hooks
 BPF_HASH(sock_ptr_map, u64, local_net_id_t);            // sock address to network identifier
-BPF_LRU_HASH(network_map, local_net_id_t, u32);         // network identifier to context
+BPF_LRU_HASH(network_map, local_net_id_t, net_ctx_t);   // network identifier to context
 BPF_ARRAY(file_filter, path_filter_t, 3);               // Used to filter vfs_write events
 BPF_ARRAY(string_store, path_filter_t, 1);              // Store strings from userspace
 BPF_PERCPU_ARRAY(bufs, buf_t, MAX_BUFFERS);             // Percpu global buffer variables
@@ -3039,15 +3047,20 @@ int BPF_KPROBE(trace_security_socket_bind)
     }
 
     if (connect_id.port) {
-        bpf_map_update_elem(&network_map, &connect_id, &context.host_tid, BPF_ANY);
+        net_ctx_t net_ctx;
+        net_ctx.host_tid = context.host_tid;
+        __builtin_memcpy(net_ctx.comm, context.comm, TASK_COMM_LEN);
+        bpf_map_update_elem(&network_map, &connect_id, &net_ctx, BPF_ANY);
     }
 
     events_perf_submit(ctx);
 
     // netDebug event
     if (get_config(CONFIG_DEBUG_NET)) {
-        struct net_debug_t debug_event = {0};
+        net_debug_t debug_event = {0};
         debug_event.ts = bpf_ktime_get_ns();
+        debug_event.host_tid = context.host_tid;
+        __builtin_memcpy(debug_event.comm, context.comm, TASK_COMM_LEN);
         debug_event.event_id = DEBUG_NET_SECURITY_BIND;
         debug_event.local_addr = connect_id.address;
         debug_event.local_port = connect_id.port;
@@ -3078,7 +3091,10 @@ static __always_inline int net_map_update_or_delete_sock(void* ctx, int event_id
 
     if (connect_id.port) {
         if (tid != 0) {
-            bpf_map_update_elem(&network_map, &connect_id, &tid, BPF_ANY);
+            net_ctx_t net_ctx;
+            net_ctx.host_tid = tid;
+            bpf_get_current_comm(&net_ctx.comm, sizeof(net_ctx.comm));
+            bpf_map_update_elem(&network_map, &connect_id, &net_ctx, BPF_ANY);
         } else {
             bpf_map_delete_elem(&network_map, &connect_id);
         }
@@ -3086,8 +3102,10 @@ static __always_inline int net_map_update_or_delete_sock(void* ctx, int event_id
 
     // netDebug event
     if (get_config(CONFIG_DEBUG_NET)) {
-        struct net_debug_t debug_event = {0};
+        net_debug_t debug_event = {0};
         debug_event.ts = bpf_ktime_get_ns();
+        debug_event.host_tid = bpf_get_current_pid_tgid();
+        bpf_get_current_comm(&debug_event.comm, sizeof(debug_event.comm));
         debug_event.event_id = event_id;
         debug_event.local_addr = connect_id.address;
         debug_event.local_port = connect_id.port;
@@ -3149,7 +3167,7 @@ SEC("raw_tracepoint/inet_sock_set_state")
 int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
 {
     local_net_id_t connect_id = {0};
-    struct net_debug_t debug_event = {0};
+    net_debug_t debug_event = {0};
 
     struct sock *sk = (struct sock *)ctx->args[0];
     int old_state = ctx->args[1];
@@ -3212,8 +3230,10 @@ int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
         // To update the network_map correctly in that case, we use the 'TCP_LISTEN' state.
         if (new_state == TCP_LISTEN || new_state == TCP_ESTABLISHED) {
             bpf_map_update_elem(&sock_ptr_map, &sk, connect_id_p, BPF_ANY);
-            u32 tid = bpf_get_current_pid_tgid();
-            bpf_map_update_elem(&network_map, connect_id_p, &tid, BPF_ANY);
+            net_ctx_t net_ctx;
+            net_ctx.host_tid = bpf_get_current_pid_tgid();
+            bpf_get_current_comm(&net_ctx.comm, sizeof(net_ctx.comm));
+            bpf_map_update_elem(&network_map, connect_id_p, &net_ctx, BPF_ANY);
         }
         else if (new_state == TCP_CLOSE) {
             bpf_map_delete_elem(&sock_ptr_map, &sk);
@@ -3224,6 +3244,8 @@ int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
     // netDebug event
     if (get_config(CONFIG_DEBUG_NET)) {
         debug_event.ts = bpf_ktime_get_ns();
+        debug_event.host_tid = bpf_get_current_pid_tgid();
+        bpf_get_current_comm(&debug_event.comm, sizeof(debug_event.comm));
         debug_event.event_id = DEBUG_NET_INET_SOCK_SET_STATE;
         debug_event.old_state = old_state;
         debug_event.new_state = new_state;
@@ -3821,7 +3843,7 @@ static __always_inline int tc_probe(struct __sk_buff *skb, bool ingress) {
     }
 
     struct ethhdr *eth = (void *)head;
-    struct net_packet_t pkt = {0};
+    net_packet_t pkt = {0};
     pkt.ts = bpf_ktime_get_ns();
     pkt.len = skb->len;
     local_net_id_t connect_id = {0};
@@ -3893,15 +3915,15 @@ static __always_inline int tc_probe(struct __sk_buff *skb, bool ingress) {
     connect_id.protocol = pkt.protocol;
     connect_id.address = pkt.src_addr;
     connect_id.port = pkt.src_port;
-    u32 *tid = bpf_map_lookup_elem(&network_map, &connect_id);
-    if (tid == NULL) {
+    net_ctx_t *net_ctx = bpf_map_lookup_elem(&network_map, &connect_id);
+    if (net_ctx == NULL) {
         // We could have used traffic direction (ingress bool) to know if we should look for src or dst
         // however, if we attach to a bridge interface, src and dst are switched
         // For this reason, we look in the network map for both src and dst
         connect_id.address = pkt.dst_addr;
         connect_id.port = pkt.dst_port;
-        tid = bpf_map_lookup_elem(&network_map, &connect_id);
-        if (tid == NULL) {
+        net_ctx = bpf_map_lookup_elem(&network_map, &connect_id);
+        if (net_ctx == NULL) {
             // Check if network_map has an ip of 0.0.0.0
             // Note: A conflict might occur between processes in different namespace that bind to 0.0.0.0
             // todo: handle network namespaces conflicts
@@ -3909,16 +3931,19 @@ static __always_inline int tc_probe(struct __sk_buff *skb, bool ingress) {
             eth = (void *)head;
             if (bpf_ntohs(eth->h_proto) == ETH_P_IP)
                 connect_id.address.s6_addr16[5] = 0xffff;
-            tid = bpf_map_lookup_elem(&network_map, &connect_id);
-            if (tid == NULL) {
+            net_ctx = bpf_map_lookup_elem(&network_map, &connect_id);
+            if (net_ctx == NULL) {
                 connect_id.port = pkt.src_port;
-                tid = bpf_map_lookup_elem(&network_map, &connect_id);
-                if (tid == NULL) {
+                net_ctx = bpf_map_lookup_elem(&network_map, &connect_id);
+                if (net_ctx == NULL) {
                     return TC_ACT_OK;
                 }
             }
         }
     }
+
+    pkt.host_tid = net_ctx->host_tid;
+    __builtin_memcpy(pkt.comm, net_ctx->comm, TASK_COMM_LEN);
 
     /* The tc perf_event_output handler will use the upper 32 bits
      * of the flags argument as a number of bytes to include of the
@@ -3934,8 +3959,8 @@ static __always_inline int tc_probe(struct __sk_buff *skb, bool ingress) {
         bpf_perf_event_output(skb, &net_events, flags, &pkt, sizeof(pkt));
     else
         // If not debuggin, only send the minimal required data to save the packet.
-        // This will be the net event_id (u32), packet len (u32), and timestamp (u64)
-        bpf_perf_event_output(skb, &net_events, flags, &pkt, 16);
+        // This will be the timestamp (u64), net event_id (u32), host_tid (u32), comm (16 bytes) and packet len (u32)
+        bpf_perf_event_output(skb, &net_events, flags, &pkt, 36);
 
     return TC_ACT_OK;
 }
