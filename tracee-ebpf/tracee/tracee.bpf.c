@@ -3210,34 +3210,30 @@ int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
         return 0;
     }
 
-    if (connect_id.port || connect_id_p == 0) {
-        connect_id_p = &connect_id;
-    }
-
     // When we have an outgoing network connection to a remote server, we get 'TCP_ESTABLISHED' with a context
     // which is different from the client's context.
     // We use 'TCP_SYN_SENT' state change, which we observed to always happen in the correct context,
     // and save the socket in sock_ptr_map so we can avoid performing the should_trace() check
     // Note that in this state, the port equals to 0, so we don't update the network_map here
     if (new_state == TCP_SYN_SENT) {
-        bpf_map_update_elem(&sock_ptr_map, &sk, connect_id_p, BPF_ANY);
+        bpf_map_update_elem(&sock_ptr_map, &sk, &connect_id, BPF_ANY);
     }
 
-    if (connect_id_p->port) {
+    if (connect_id.port) {
         // Ideally, we would update the network map only in 'TCP_ESTABLISHED' state.
         // However, in the case of a local server program and a local client program, which communicate via the 'lo' interface,
         // the change to the 'TCP_ESTABLISHED' state of the server's socket doesn't happen in the (process) context of the server.
         // To update the network_map correctly in that case, we use the 'TCP_LISTEN' state.
         if (new_state == TCP_LISTEN || new_state == TCP_ESTABLISHED) {
-            bpf_map_update_elem(&sock_ptr_map, &sk, connect_id_p, BPF_ANY);
+            bpf_map_update_elem(&sock_ptr_map, &sk, &connect_id, BPF_ANY);
             net_ctx_t net_ctx;
             net_ctx.host_tid = bpf_get_current_pid_tgid();
             bpf_get_current_comm(&net_ctx.comm, sizeof(net_ctx.comm));
-            bpf_map_update_elem(&network_map, connect_id_p, &net_ctx, BPF_ANY);
+            bpf_map_update_elem(&network_map, &connect_id, &net_ctx, BPF_ANY);
         }
         else if (new_state == TCP_CLOSE) {
             bpf_map_delete_elem(&sock_ptr_map, &sk);
-            bpf_map_delete_elem(&network_map, connect_id_p);
+            bpf_map_delete_elem(&network_map, &connect_id);
         }
     }
 
