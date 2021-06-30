@@ -976,10 +976,6 @@ func (t *Tracee) initBPF(bpfObjectPath string) error {
 	if t.config.Capture.NetIfaces != nil || t.config.DebugNet {
 		if t.config.Capture.NetIfaces != nil {
 			ifaceName := t.config.Capture.NetIfaces[0]
-			// Todo: we can use the net package to enumerate the interfaces on the system
-			// also, it can be used to get their addresses (see the net package doc for other functionality)
-			// think if this can be used somehow
-
 			t.tcProbe.ingressHook, err = t.attachTcProg(ifaceName, bpf.BPFTcIngress, "tc_ingress")
 			if err != nil {
 				return err
@@ -1684,12 +1680,12 @@ func (t *Tracee) processFileWrites() {
 
 func (t *Tracee) processNetEvents() {
 	type netEvent struct {
-		SrcIP     [16]byte
-		DestIP    [16]byte
-		SrcPort   uint16
-		DestPort  uint16
-		Protocol  uint8
-		_         [3]byte //padding
+		SrcIP    [16]byte
+		DestIP   [16]byte
+		SrcPort  uint16
+		DestPort uint16
+		Protocol uint8
+		_        [3]byte //padding
 	}
 
 	type netDebugEvent struct {
@@ -1706,13 +1702,13 @@ func (t *Tracee) processNetEvents() {
 	}
 
 	type packetMeta struct {
-		TimeStamp   uint64
-		SrcIP       netaddr.IP
-		SrcPort     uint16
-		DestIP      netaddr.IP
-		DestPort    uint16
-		Protocol    uint8
-		Len         uint32
+		TimeStamp uint64
+		SrcIP     netaddr.IP
+		SrcPort   uint16
+		DestIP    netaddr.IP
+		DestPort  uint16
+		Protocol  uint8
+		Len       uint32
 	}
 
 	//Todo:
@@ -1735,108 +1731,104 @@ func (t *Tracee) processNetEvents() {
 			netEventId := binary.LittleEndian.Uint32(in[8:12])
 			dataBuff := bytes.NewBuffer(in[12:])
 
-			if netEventId != 0 {
-				if t.config.DebugNet {
-					var pkt netDebugEvent
-					err := binary.Read(dataBuff, binary.LittleEndian, &pkt)
-					if err != nil {
-						t.handleError(err)
-						continue
-					}
-					switch netEventId {
-					case DebugNetSecurityBind:
-						fmt.Printf("TimeStamp: %d, event: security_socket_bind, local_addr: %v, local_port: %d, protocol: %d\n",
-							timeStamp,
-							netaddr.IPFrom16(pkt.LocalIP),
-							pkt.LocalPort,
-							pkt.Protocol)
-					case DebugNetUdpSendmsg:
-						fmt.Printf("TimeStamp: %d, event: udp_sendmsg, local_addr: %v, local_port: %d, protocol: %d\n",
-							timeStamp,
-							netaddr.IPFrom16(pkt.LocalIP),
-							pkt.LocalPort,
-							pkt.Protocol)
-					case DebugNetUdpDisconnect:
-						fmt.Printf("TimeStamp: %d, event: __udp_disconnect, local_addr: %v, local_port: %d, protocol: %d\n",
-							timeStamp,
-							netaddr.IPFrom16(pkt.LocalIP),
-							pkt.LocalPort,
-							pkt.Protocol)
-					case DebugNetUdpDestroySock:
-						fmt.Printf("TimeStamp: %d, event: udp_destroy_sock, local_addr: %v, local_port: %d, protocol: %d\n",
-							timeStamp,
-							netaddr.IPFrom16(pkt.LocalIP),
-							pkt.LocalPort,
-							pkt.Protocol)
-					case DebugNetUdpV6DestroySock:
-						fmt.Printf("TimeStamp: %d, event: udpv6_destroy_sock, local_addr: %v, local_port: %d, protocol: %d\n",
-							timeStamp,
-							netaddr.IPFrom16(pkt.LocalIP),
-							pkt.LocalPort,
-							pkt.Protocol)
-					case DebugNetInetSockSetState:
-						fmt.Printf("TimeStamp: %d, event: inet_sock_set_state, local_addr: %v, local_port: %d, remote_addr: %v, remote_port: %d, protocol: %d, old_state: %d, new_state: %d, sock_ptr: %x\n",
-							timeStamp,
-							netaddr.IPFrom16(pkt.LocalIP),
-							pkt.LocalPort,
-							netaddr.IPFrom16(pkt.RemoteIP),
-							pkt.RemotePort,
-							pkt.Protocol,
-							pkt.TcpOldState,
-							pkt.TcpNewState,
-							pkt.SockPtr)
-					}
-				}
-				continue
-			}
-
-			var pktLen uint32
-			err := binary.Read(dataBuff, binary.LittleEndian, &pktLen)
-			if err != nil {
-				t.handleError(err)
-				continue
-			}
-
-			if t.config.DebugNet {
-				var pkt netEvent
-				err = binary.Read(dataBuff, binary.LittleEndian, &pkt)
+			if netEventId == NetPacket {
+				var pktLen uint32
+				err := binary.Read(dataBuff, binary.LittleEndian, &pktLen)
 				if err != nil {
 					t.handleError(err)
 					continue
 				}
 
-				pktMeta := packetMeta{
-					TimeStamp: timeStamp,
-					SrcIP:     netaddr.IPFrom16(pkt.SrcIP),
-					SrcPort:   pkt.SrcPort,
-					DestIP:    netaddr.IPFrom16(pkt.DestIP),
-					DestPort:  pkt.DestPort,
-					Protocol:  pkt.Protocol,
-					Len:       pktLen,
+				if t.config.DebugNet {
+					var pkt netEvent
+					err = binary.Read(dataBuff, binary.LittleEndian, &pkt)
+					if err != nil {
+						t.handleError(err)
+						continue
+					}
+
+					pktMeta := packetMeta{
+						TimeStamp: timeStamp,
+						SrcIP:     netaddr.IPFrom16(pkt.SrcIP),
+						SrcPort:   pkt.SrcPort,
+						DestIP:    netaddr.IPFrom16(pkt.DestIP),
+						DestPort:  pkt.DestPort,
+						Protocol:  pkt.Protocol,
+						Len:       pktLen,
+					}
+					fmt.Printf("%+v\n", pktMeta)
 				}
-				fmt.Printf("%+v\n", pktMeta)
-			}
 
-			info := gopacket.CaptureInfo{
-				Timestamp:      time.Unix(0, int64(timeStamp)),
-				CaptureLength:  int(pktLen),
-				Length:         int(pktLen),
-				InterfaceIndex: 0, // todo: accept array of interfaces?
-			}
+				info := gopacket.CaptureInfo{
+					Timestamp:      time.Unix(0, int64(timeStamp)),
+					CaptureLength:  int(pktLen),
+					Length:         int(pktLen),
+					InterfaceIndex: 0, // todo: accept array of interfaces?
+				}
 
-			err = t.pcapWriter.WritePacket(info, dataBuff.Bytes()[:pktLen])
-			if err != nil {
-				t.handleError(err)
-				continue
-			}
+				err = t.pcapWriter.WritePacket(info, dataBuff.Bytes()[:pktLen])
+				if err != nil {
+					t.handleError(err)
+					continue
+				}
 
-			// todo: maybe we should not flush every packet?
-			err = t.pcapWriter.Flush()
-			if err != nil {
-				t.handleError(err)
-				continue
+				// todo: maybe we should not flush every packet?
+				err = t.pcapWriter.Flush()
+				if err != nil {
+					t.handleError(err)
+					continue
+				}
+			} else if t.config.DebugNet {
+				var pkt netDebugEvent
+				err := binary.Read(dataBuff, binary.LittleEndian, &pkt)
+				if err != nil {
+					t.handleError(err)
+					continue
+				}
+				switch netEventId {
+				case DebugNetSecurityBind:
+					fmt.Printf("TimeStamp: %d, Event: security_socket_bind, LocalIP: %v, LocalPort: %d, Protocol: %d\n",
+						timeStamp,
+						netaddr.IPFrom16(pkt.LocalIP),
+						pkt.LocalPort,
+						pkt.Protocol)
+				case DebugNetUdpSendmsg:
+					fmt.Printf("TimeStamp: %d, Event: udp_sendmsg, LocalIP: %v, LocalPort: %d, Protocol: %d\n",
+						timeStamp,
+						netaddr.IPFrom16(pkt.LocalIP),
+						pkt.LocalPort,
+						pkt.Protocol)
+				case DebugNetUdpDisconnect:
+					fmt.Printf("TimeStamp: %d, Event: __udp_disconnect, LocalIP: %v, LocalPort: %d, Protocol: %d\n",
+						timeStamp,
+						netaddr.IPFrom16(pkt.LocalIP),
+						pkt.LocalPort,
+						pkt.Protocol)
+				case DebugNetUdpDestroySock:
+					fmt.Printf("TimeStamp: %d, Event: udp_destroy_sock, LocalIP: %v, LocalPort: %d, Protocol: %d\n",
+						timeStamp,
+						netaddr.IPFrom16(pkt.LocalIP),
+						pkt.LocalPort,
+						pkt.Protocol)
+				case DebugNetUdpV6DestroySock:
+					fmt.Printf("TimeStamp: %d, Event: udpv6_destroy_sock, LocalIP: %v, LocalPort: %d, Protocol: %d\n",
+						timeStamp,
+						netaddr.IPFrom16(pkt.LocalIP),
+						pkt.LocalPort,
+						pkt.Protocol)
+				case DebugNetInetSockSetState:
+					fmt.Printf("TimeStamp: %d, Event: inet_sock_set_state, LocalIP: %v, LocalPort: %d, RemoteIP: %v, RemotePort: %d, Protocol: %d, OldState: %d, NewState: %d, SockPtr: %x\n",
+						timeStamp,
+						netaddr.IPFrom16(pkt.LocalIP),
+						pkt.LocalPort,
+						netaddr.IPFrom16(pkt.RemoteIP),
+						pkt.RemotePort,
+						pkt.Protocol,
+						pkt.TcpOldState,
+						pkt.TcpNewState,
+						pkt.SockPtr)
+				}
 			}
-
 		case lost := <-t.lostNetChannel:
 			t.stats.lostNtCounter.Increment(int(lost))
 		}

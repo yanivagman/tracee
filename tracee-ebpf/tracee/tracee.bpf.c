@@ -1929,46 +1929,6 @@ static __always_inline int get_local_net_id_from_network_details_v6(struct sock 
     return 0;
 }
 
-// To delete socket from net map use tid==0, otherwise, update
-static __always_inline int net_map_update_or_delete_sock(void* ctx, int event_id, struct sock *sk, u32 tid)
-{
-    local_net_id_t connect_id = {0};
-    u16 family = get_sock_family(sk);
-
-    if (family == AF_INET) {
-        net_conn_v4_t net_details = {};
-        get_network_details_from_sock_v4(sk, &net_details, 0);
-        if (net_details.local_port)
-            get_local_net_id_from_network_details_v4(sk, &connect_id, &net_details, family);
-    } else if (family == AF_INET6) {
-        net_conn_v6_t net_details = {};
-        get_network_details_from_sock_v6(sk, &net_details, 0);
-        if (net_details.local_port)
-            get_local_net_id_from_network_details_v6(sk, &connect_id, &net_details, family);
-    }
-
-    if (connect_id.port) {
-        if (tid != 0) {
-            bpf_map_update_elem(&network_map, &connect_id, &tid, BPF_ANY);
-        } else {
-            bpf_map_delete_elem(&network_map, &connect_id);
-        }
-    }
-
-    // netDebug event
-    if (get_config(CONFIG_DEBUG_NET)) {
-        struct net_debug_t debug_event = {0};
-        debug_event.ts = bpf_ktime_get_ns();
-        debug_event.event_id = event_id;
-        debug_event.local_addr = connect_id.address;
-        debug_event.local_port = connect_id.port;
-        debug_event.protocol = connect_id.protocol;
-        bpf_perf_event_output(ctx, &net_events, BPF_F_CURRENT_CPU, &debug_event, sizeof(debug_event));
-    }
-
-    return 0;
-};
-
 /*============================== SYSCALL HOOKS ==============================*/
 
 // include/trace/events/syscalls.h:
@@ -3092,6 +3052,46 @@ int BPF_KPROBE(trace_security_socket_bind)
         debug_event.local_addr = connect_id.address;
         debug_event.local_port = connect_id.port;
         debug_event.protocol = protocol;
+        bpf_perf_event_output(ctx, &net_events, BPF_F_CURRENT_CPU, &debug_event, sizeof(debug_event));
+    }
+
+    return 0;
+};
+
+// To delete socket from net map use tid==0, otherwise, update
+static __always_inline int net_map_update_or_delete_sock(void* ctx, int event_id, struct sock *sk, u32 tid)
+{
+    local_net_id_t connect_id = {0};
+    u16 family = get_sock_family(sk);
+
+    if (family == AF_INET) {
+        net_conn_v4_t net_details = {};
+        get_network_details_from_sock_v4(sk, &net_details, 0);
+        if (net_details.local_port)
+            get_local_net_id_from_network_details_v4(sk, &connect_id, &net_details, family);
+    } else if (family == AF_INET6) {
+        net_conn_v6_t net_details = {};
+        get_network_details_from_sock_v6(sk, &net_details, 0);
+        if (net_details.local_port)
+            get_local_net_id_from_network_details_v6(sk, &connect_id, &net_details, family);
+    }
+
+    if (connect_id.port) {
+        if (tid != 0) {
+            bpf_map_update_elem(&network_map, &connect_id, &tid, BPF_ANY);
+        } else {
+            bpf_map_delete_elem(&network_map, &connect_id);
+        }
+    }
+
+    // netDebug event
+    if (get_config(CONFIG_DEBUG_NET)) {
+        struct net_debug_t debug_event = {0};
+        debug_event.ts = bpf_ktime_get_ns();
+        debug_event.event_id = event_id;
+        debug_event.local_addr = connect_id.address;
+        debug_event.local_port = connect_id.port;
+        debug_event.protocol = connect_id.protocol;
         bpf_perf_event_output(ctx, &net_events, BPF_F_CURRENT_CPU, &debug_event, sizeof(debug_event));
     }
 
