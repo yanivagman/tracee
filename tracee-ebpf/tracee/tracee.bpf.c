@@ -451,6 +451,12 @@ typedef struct net_ctx {
     char comm[TASK_COMM_LEN];
 } net_ctx_t;
 
+typedef struct net_ctx_ext {
+    u32 host_tid;
+    char comm[TASK_COMM_LEN];
+    __be16 local_port;
+} net_ctx_ext_t;
+
 /*================================ KERNEL STRUCTS =============================*/
 
 #ifndef CORE
@@ -490,7 +496,7 @@ BPF_HASH(sys_32_to_64_map, u32, u32);                   // Map 32bit syscalls nu
 BPF_HASH(params_types_map, u32, u64);                   // Encoded parameters types for event
 BPF_HASH(params_names_map, u32, u64);                   // Encoded parameters names for event
 BPF_HASH(sockfd_map, u32, u32);                         // Persist sockfd from syscalls to be used in the corresponding lsm hooks
-BPF_HASH(sock_ctx_map, u64, net_ctx_t);                 // Socket address to process context
+BPF_LRU_HASH(sock_ctx_map, u64, net_ctx_ext_t);         // Socket address to process context
 BPF_LRU_HASH(network_map, local_net_id_t, net_ctx_t);   // Network identifier to process context
 BPF_ARRAY(file_filter, path_filter_t, 3);               // Used to filter vfs_write events
 BPF_ARRAY(string_store, path_filter_t, 1);              // Store strings from userspace
@@ -3168,6 +3174,7 @@ int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
 {
     local_net_id_t connect_id = {0};
     net_debug_t debug_event = {0};
+    net_ctx_ext_t net_ctx_ext = {0};
 
     struct sock *sk = (struct sock *)ctx->args[0];
     int old_state = ctx->args[1];
@@ -3177,7 +3184,7 @@ int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
     // In these cases, we won't pass the should_trace() check.
     // To overcome this problem, we save the socket pointer in sock_ctx_map in states that we observed to have the correct context.
     // We can then check for the existence of a socket in the map, and continue if it was traced before.
-    net_ctx_t *sock_ctx_p = bpf_map_lookup_elem(&sock_ctx_map, &sk);
+    net_ctx_ext_t *sock_ctx_p = bpf_map_lookup_elem(&sock_ctx_map, &sk);
     if (!sock_ctx_p) {
         if (!should_trace()) {
             return 0;
@@ -3210,38 +3217,46 @@ int tracepoint__inet_sock_set_state(struct bpf_raw_tracepoint_args *ctx)
         return 0;
     }
 
-    // When we have an outgoing network connection to a remote server, we get 'TCP_ESTABLISHED' with a context
-    // which is different from the client's context.
-    // We use 'TCP_SYN_SENT' state change, which we observed to always happen in the correct context,
-    // and save the socket in sock_ctx_map so we can avoid performing the should_trace() check
-    // Note that in this state, the port equals to 0, so we don't update the network_map here
-    if (new_state == TCP_SYN_SENT) {
-        net_ctx_t net_ctx;
-        net_ctx.host_tid = bpf_get_current_pid_tgid();
-        bpf_get_current_comm(&net_ctx.comm, sizeof(net_ctx.comm));
-        bpf_map_update_elem(&sock_ctx_map, &sk, &net_ctx, BPF_ANY);
-    }
-
-    if (connect_id.port) {
+    switch (new_state) {
+    case TCP_SYN_SENT:
+        // When we have an outgoing network connection to a remote server, we get 'TCP_ESTABLISHED' with a context
+        // which is different from the client's context.
+        // We use 'TCP_SYN_SENT' state change, which we observed to always happen in the correct context,
+        // and save the socket in sock_ctx_map so we can avoid performing the should_trace() check
+        // Note that in this state, the port equals to 0, so we don't update the network_map here
+        net_ctx_ext.host_tid = bpf_get_current_pid_tgid();
+        bpf_get_current_comm(&net_ctx_ext.comm, sizeof(net_ctx_ext.comm));
+        net_ctx_ext.local_port = connect_id.port;
+        bpf_map_update_elem(&sock_ctx_map, &sk, &net_ctx_ext, BPF_ANY);
+        break;
+    case TCP_LISTEN:
+    case TCP_ESTABLISHED:
         // Ideally, we would update the network map only in 'TCP_ESTABLISHED' state.
         // However, in the case of a local server program and a local client program, which communicate via the 'lo' interface,
         // the change to the 'TCP_ESTABLISHED' state of the server's socket doesn't happen in the (process) context of the server.
         // To update the network_map correctly in that case, we use the 'TCP_LISTEN' state.
-        if (new_state == TCP_LISTEN || new_state == TCP_ESTABLISHED) {
+        if (connect_id.port) {
             if (!sock_ctx_p) {
-                net_ctx_t net_ctx;
-                net_ctx.host_tid = bpf_get_current_pid_tgid();
-                bpf_get_current_comm(&net_ctx.comm, sizeof(net_ctx.comm));
-                bpf_map_update_elem(&sock_ctx_map, &sk, &net_ctx, BPF_ANY);
-                bpf_map_update_elem(&network_map, &connect_id, &net_ctx, BPF_ANY);
+                net_ctx_ext.host_tid = bpf_get_current_pid_tgid();
+                bpf_get_current_comm(&net_ctx_ext.comm, sizeof(net_ctx_ext.comm));
+                net_ctx_ext.local_port = connect_id.port;
+                bpf_map_update_elem(&sock_ctx_map, &sk, &net_ctx_ext, BPF_ANY);
+                bpf_map_update_elem(&network_map, &connect_id, &net_ctx_ext, BPF_ANY);
             } else {
+                sock_ctx_p->local_port = connect_id.port;
                 bpf_map_update_elem(&network_map, &connect_id, sock_ctx_p, BPF_ANY);
             }
         }
-        else if (new_state == TCP_CLOSE) {
-            bpf_map_delete_elem(&sock_ctx_map, &sk);
-            bpf_map_delete_elem(&network_map, &connect_id);
+        break;
+    case TCP_CLOSE:
+        // At this point, port equals 0, so we will not be able to use current connect_id as a key to network map
+        // We used the value saved in sock_ctx_map instead
+        if (sock_ctx_p) {
+            connect_id.port = sock_ctx_p->local_port;
         }
+        bpf_map_delete_elem(&sock_ctx_map, &sk);
+        bpf_map_delete_elem(&network_map, &connect_id);
+        break;
     }
 
     // netDebug event
