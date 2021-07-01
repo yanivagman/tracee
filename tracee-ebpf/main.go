@@ -238,6 +238,7 @@ Possible options:
 [artifact:]exec                    capture executed files.
 [artifact:]mem                     capture memory regions that had write+execute (w+x) protection, and then changed to execute (x) only.
 [artifact:]all                     capture all of the above artifacts.
+[artifact:]net=interface           capture network traffic of the given interface
 
 dir:/path/to/dir        path where tracee will save produced artifacts. the artifact will be saved into an 'out' subdirectory. (default: /tmp/tracee).
 profile                 creates a runtime profile of program executions and their metadata for forensics use.
@@ -247,7 +248,8 @@ Examples:
   --capture exec                                           | capture executed files into the default output directory
   --capture all --capture dir:/my/dir --capture clear-dir  | delete /my/dir/out and then capture all supported artifacts into it
   --capture write=/usr/bin/* --capture write=/etc/*        | capture files that were written into anywhere under /usr/bin/ or /etc/
-  --capture exec --capture profile                         | captures executed files and create a runtime profile in the output directory
+  --capture exec --capture profile                         | capture executed files and create a runtime profile in the output directory
+  --capture net=eth0                                       | capture network traffic of eth0
 
 Use this flag multiple times to choose multiple capture options
 `

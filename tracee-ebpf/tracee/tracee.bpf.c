@@ -3847,7 +3847,7 @@ static __always_inline int tc_probe(struct __sk_buff *skb, bool ingress) {
     uint8_t *tail = (uint8_t *)(long)skb->data_end;
 
     if (head + sizeof(struct ethhdr) > tail) {
-        return TC_ACT_OK;
+        return TC_ACT_UNSPEC;
     }
 
     struct ethhdr *eth = (void *)head;
@@ -3863,7 +3863,7 @@ static __always_inline int tc_probe(struct __sk_buff *skb, bool ingress) {
         l4_hdr_off = sizeof(struct ethhdr) + sizeof(struct iphdr);
 
         if (!skb_revalidate_data(skb, &head, &tail, l4_hdr_off)) {
-            return TC_ACT_OK;
+            return TC_ACT_UNSPEC;
         }
 
         struct iphdr *ip = (void *)head + sizeof(struct ethhdr);
@@ -3882,7 +3882,7 @@ static __always_inline int tc_probe(struct __sk_buff *skb, bool ingress) {
         l4_hdr_off = sizeof(struct ethhdr) + sizeof(struct ipv6hdr);
 
         if (!skb_revalidate_data(skb, &head, &tail, l4_hdr_off)) {
-            return TC_ACT_OK;
+            return TC_ACT_UNSPEC;
         }
 
         struct ipv6hdr *ip6 = (void *)head + sizeof(struct ethhdr);
@@ -3894,12 +3894,12 @@ static __always_inline int tc_probe(struct __sk_buff *skb, bool ingress) {
 
         break;
     default:
-        return TC_ACT_OK;
+        return TC_ACT_UNSPEC;
     }
 
     if (pkt.protocol == IPPROTO_TCP) {
         if (!skb_revalidate_data(skb, &head, &tail, l4_hdr_off + sizeof(struct tcphdr))) {
-            return TC_ACT_OK;
+            return TC_ACT_UNSPEC;
         }
 
         struct tcphdr *tcp = (void *)head + l4_hdr_off;
@@ -3908,7 +3908,7 @@ static __always_inline int tc_probe(struct __sk_buff *skb, bool ingress) {
         pkt.dst_port = tcp->dest;
     } else if (pkt.protocol == IPPROTO_UDP) {
         if (!skb_revalidate_data(skb, &head, &tail, l4_hdr_off + sizeof(struct udphdr))) {
-            return TC_ACT_OK;
+            return TC_ACT_UNSPEC;
         }
 
         struct udphdr *udp = (void *)head + l4_hdr_off;
@@ -3917,7 +3917,7 @@ static __always_inline int tc_probe(struct __sk_buff *skb, bool ingress) {
         pkt.dst_port = udp->dest;
     } else {
         //todo: support other transport protocols?
-        return TC_ACT_OK;
+        return TC_ACT_UNSPEC;
     }
 
     connect_id.protocol = pkt.protocol;
@@ -3944,7 +3944,7 @@ static __always_inline int tc_probe(struct __sk_buff *skb, bool ingress) {
                 connect_id.port = pkt.src_port;
                 net_ctx = bpf_map_lookup_elem(&network_map, &connect_id);
                 if (net_ctx == NULL) {
-                    return TC_ACT_OK;
+                    return TC_ACT_UNSPEC;
                 }
             }
         }
@@ -3970,7 +3970,7 @@ static __always_inline int tc_probe(struct __sk_buff *skb, bool ingress) {
         // This will be the timestamp (u64), net event_id (u32), host_tid (u32), comm (16 bytes) and packet len (u32)
         bpf_perf_event_output(skb, &net_events, flags, &pkt, 36);
 
-    return TC_ACT_OK;
+    return TC_ACT_UNSPEC;
 }
 
 SEC("classifier")
