@@ -22,13 +22,20 @@ type probe struct {
 	fn     string
 }
 
+type dependencies struct {
+	events    []eventDependency // Events required to be loaded and/or submitted for the event to happen
+	ksymbols  []string
+	tailCalls []tailCall
+}
+
 type eventDependency struct {
 	eventID int32
 }
 
-type dependencies struct {
-	events   []eventDependency // Events required to be loaded and/or submitted for the event to happen
-	ksymbols []string
+type tailCall struct {
+	mapName  string
+	mapIdx   uint32
+	progName string
 }
 
 // EventDefinition is a struct describing an event configuration
@@ -877,6 +884,11 @@ var EventsDefinitions = map[int32]EventDefinition{
 		Name:    "execve",
 		Probes: []probe{
 			{event: "execve", attach: sysCall, fn: "execve"},
+		},
+		Dependencies: dependencies{
+			tailCalls: []tailCall{
+				{mapName: "sys_enter_tails", mapIdx: uint32(ExecveEventID), progName: "syscall__execve"},
+			},
 		},
 		Sets: []string{"default", "syscalls", "proc", "proc_life"},
 		Params: []trace.ArgMeta{
@@ -4154,6 +4166,11 @@ var EventsDefinitions = map[int32]EventDefinition{
 		Probes: []probe{
 			{event: "execveat", attach: sysCall, fn: "execveat"},
 		},
+		Dependencies: dependencies{
+			tailCalls: []tailCall{
+				{mapName: "sys_enter_tails", mapIdx: uint32(ExecveatEventID), progName: "syscall__execveat"},
+			},
+		},
 		Sets: []string{"default", "syscalls", "proc", "proc_life"},
 		Params: []trace.ArgMeta{
 			{Type: "int", Name: "dirfd"},
@@ -6139,7 +6156,14 @@ var EventsDefinitions = map[int32]EventDefinition{
 		ID32Bit: sys32undefined,
 		Name:    "socket_dup",
 		Probes:  []probe{},
-		Sets:    []string{},
+		Dependencies: dependencies{
+			tailCalls: []tailCall{
+				{mapName: "sys_exit_tails", mapIdx: uint32(DupEventID), progName: "sys_dup_exit_tail"},
+				{mapName: "sys_exit_tails", mapIdx: uint32(Dup2EventID), progName: "sys_dup_exit_tail"},
+				{mapName: "sys_exit_tails", mapIdx: uint32(Dup3EventID), progName: "sys_dup_exit_tail"},
+			},
+		},
+		Sets: []string{},
 		Params: []trace.ArgMeta{
 			{Type: "int", Name: "oldfd"},
 			{Type: "int", Name: "newfd"},
