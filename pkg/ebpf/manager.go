@@ -32,7 +32,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Config is a struct containing user defined configuration of tracee
+// Config is a struct containing user defined configuration of tracee-ebpf
 type Config struct {
 	Filter             *Filter
 	Capture            *CaptureConfig
@@ -41,7 +41,7 @@ type Config struct {
 	PerfBufferSize     int
 	BlobPerfBufferSize int
 	Debug              bool
-	maxPidsCache       int // maximum number of pids to cache per mnt ns (in Tracee.pidsInMntns)
+	maxPidsCache       int // maximum number of pids to cache per mnt ns (in Manager.pidsInMntns)
 	BTFObjPath         string
 	BPFObjPath         string
 	BPFObjBytes        []byte
@@ -167,8 +167,8 @@ type eventConfig struct {
 	emit   bool // event should be emitted to the user
 }
 
-// Tracee traces system calls and system events using eBPF
-type Tracee struct {
+// Manager controls tracee-ebpf configuration and holds its state
+type Manager struct {
 	config            Config
 	events            map[int32]eventConfig
 	bpfModule         *bpf.Module
@@ -199,11 +199,11 @@ type Tracee struct {
 	kernelSymbols     *helpers.KernelSymbolTable
 }
 
-func (t *Tracee) Stats() *metrics.Stats {
+func (t *Manager) Stats() *metrics.Stats {
 	return &t.stats
 }
 
-func (t *Tracee) handleEventsDependencies(e int32, initReq *RequiredInitValues) {
+func (t *Manager) handleEventsDependencies(e int32, initReq *RequiredInitValues) {
 	eDependencies := EventsDefinitions[e].Dependencies
 	if len(eDependencies.ksymbols) > 0 {
 		initReq.kallsyms = true
@@ -220,8 +220,8 @@ func (t *Tracee) handleEventsDependencies(e int32, initReq *RequiredInitValues) 
 	}
 }
 
-// New creates a new Tracee instance based on a given valid Config
-func New(cfg Config) (*Tracee, error) {
+// New creates a new Manager instance based on a given valid Config
+func New(cfg Config) (*Manager, error) {
 	var err error
 
 	err = cfg.Validate()
@@ -238,8 +238,8 @@ func New(cfg Config) (*Tracee, error) {
 	// Note: this is NOT the real boot time, as the monotonic clock doesn't take into account system sleeps.
 	bootTime := time.Now().UnixNano() - startTime
 
-	// create tracee
-	t := &Tracee{
+	// create manager
+	t := &Manager{
 		config:    cfg,
 		startTime: uint64(startTime),
 		bootTime:  uint64(bootTime),
@@ -404,7 +404,7 @@ func New(cfg Config) (*Tracee, error) {
 }
 
 // Initialize tail calls program array
-func (t *Tracee) initTailCall(tailNum uint32, mapName string, progName string) error {
+func (t *Manager) initTailCall(tailNum uint32, mapName string, progName string) error {
 
 	bpfMap, err := t.bpfModule.GetMap(mapName)
 	if err != nil {
@@ -474,7 +474,7 @@ const (
 	filterCgroupIdOut
 )
 
-func (t *Tracee) getOptionsConfig() uint32 {
+func (t *Manager) getOptionsConfig() uint32 {
 	var cOptVal uint32
 
 	if t.config.Output.DetectSyscall {
@@ -509,7 +509,7 @@ func (t *Tracee) getOptionsConfig() uint32 {
 	return cOptVal
 }
 
-func (t *Tracee) getFiltersConfig() uint32 {
+func (t *Manager) getFiltersConfig() uint32 {
 	var cFilterVal uint32
 	if t.config.Filter.UIDFilter.Enabled {
 		cFilterVal = cFilterVal | filterUIDEnabled
@@ -594,7 +594,7 @@ const (
 	tailKernelWrite
 )
 
-func (t *Tracee) populateBPFMaps() error {
+func (t *Manager) populateBPFMaps() error {
 
 	// Set chosen events map according to events chosen by the user
 	eventsToSubmitMap, err := t.bpfModule.GetMap("events_to_submit") // u32, u32
@@ -819,7 +819,7 @@ func (t *Tracee) populateBPFMaps() error {
 	return nil
 }
 
-func (t *Tracee) attachTcProg(ifaceName string, attachPoint bpf.TcAttachPoint, progName string) (*bpf.TcHook, error) {
+func (t *Manager) attachTcProg(ifaceName string, attachPoint bpf.TcAttachPoint, progName string) (*bpf.TcHook, error) {
 	hook := t.bpfModule.TcHookInit()
 	err := hook.SetInterfaceByName(ifaceName)
 	if err != nil {
@@ -846,7 +846,7 @@ func (t *Tracee) attachTcProg(ifaceName string, attachPoint bpf.TcAttachPoint, p
 	return hook, nil
 }
 
-func (t *Tracee) attachNetProbes() error {
+func (t *Manager) attachNetProbes() error {
 	prog, _ := t.bpfModule.GetProgram("trace_udp_sendmsg")
 	if prog == nil {
 		return fmt.Errorf("couldn't find trace_udp_sendmsg program")
@@ -958,7 +958,7 @@ func (t *Tracee) attachNetProbes() error {
 	return nil
 }
 
-func (t *Tracee) initBPF() error {
+func (t *Manager) initBPF() error {
 	var err error
 
 	newModuleArgs := bpf.NewModuleArgs{
@@ -1118,7 +1118,7 @@ func (t *Tracee) initBPF() error {
 	return nil
 }
 
-func (t *Tracee) writeProfilerStats(wr io.Writer) error {
+func (t *Manager) writeProfilerStats(wr io.Writer) error {
 	b, err := json.MarshalIndent(t.profiledFiles, "", "  ")
 	if err != nil {
 		return err
@@ -1130,7 +1130,7 @@ func (t *Tracee) writeProfilerStats(wr io.Writer) error {
 	return nil
 }
 
-func (t *Tracee) getProcessCtx(hostTid uint32) (procinfo.ProcessCtx, error) {
+func (t *Manager) getProcessCtx(hostTid uint32) (procinfo.ProcessCtx, error) {
 	processCtx, err := t.procInfo.GetElement(int(hostTid))
 	if err == nil {
 		return processCtx, nil
@@ -1150,7 +1150,7 @@ func (t *Tracee) getProcessCtx(hostTid uint32) (procinfo.ProcessCtx, error) {
 }
 
 // Run starts the trace. it will run until ctx is cancelled
-func (t *Tracee) Run(ctx gocontext.Context) error {
+func (t *Manager) Run(ctx gocontext.Context) error {
 	t.invokeInitEvents()
 	t.invokeIoctlTriggeredEvents()
 	t.eventsPerfMap.Start()
@@ -1211,7 +1211,7 @@ func (t *Tracee) Run(ctx gocontext.Context) error {
 }
 
 // Close cleans up created resources
-func (t *Tracee) Close() {
+func (t *Manager) Close() {
 	for _, tcProbe := range t.tcProbe {
 		// First, delete filters we created
 		tcProbe.ingressHook.Destroy()
@@ -1252,7 +1252,7 @@ func computeFileHash(fileName string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func (t *Tracee) updateFileSHA() {
+func (t *Manager) updateFileSHA() {
 	for k, v := range t.profiledFiles {
 		s := strings.Split(k, ".")
 		exeName := strings.Split(s[1], ":")[0]
@@ -1263,7 +1263,7 @@ func (t *Tracee) updateFileSHA() {
 	}
 }
 
-func (t *Tracee) invokeInitEvents() {
+func (t *Manager) invokeInitEvents() {
 	if t.events[InitNamespacesEventID].emit {
 		systemInfoEvent, _ := CreateInitNamespacesEvent()
 		t.config.ChanEvents <- systemInfoEvent
@@ -1276,10 +1276,10 @@ func (t *Tracee) invokeInitEvents() {
 		}
 	}
 }
-func (t *Tracee) getTracedIfaceIdx(ifaceName string) (int, error) {
+func (t *Manager) getTracedIfaceIdx(ifaceName string) (int, error) {
 	return findInList(ifaceName, &t.config.Filter.NetFilter.InterfacesToTrace)
 }
-func (t *Tracee) getCapturedIfaceIdx(ifaceName string) (int, error) {
+func (t *Manager) getCapturedIfaceIdx(ifaceName string) (int, error) {
 	return findInList(ifaceName, &t.config.Capture.NetIfaces)
 }
 func findInList(element string, list *[]string) (int, error) {
@@ -1293,7 +1293,7 @@ func findInList(element string, list *[]string) (int, error) {
 
 const IoctlFetchSyscalls int = 65 // randomly picked number for ioctl cmd
 
-func (t *Tracee) invokeIoctlTriggeredEvents() {
+func (t *Manager) invokeIoctlTriggeredEvents() {
 	// invoke DetectHookedSyscallsEvent
 	_, ok1 := t.events[PrintSyscallTableEventID]
 	_, ok2 := t.events[DetectHookedSyscallsEventID]

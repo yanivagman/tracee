@@ -18,7 +18,7 @@ type deriveFn func(trace.Event) (trace.Event, bool, error)
 // Initialize the eventDerivations map.
 // Here we declare for each Event (represented through it's ID)
 // to which other Events it can be derived and the corresponding function to derive into that Event.
-func (t *Tracee) initEventDerivationMap() error {
+func (t *Manager) initEventDerivationMap() error {
 	t.eventDerivations = map[int32]map[int32]deriveFn{
 		CgroupMkdirEventID: {
 			ContainerCreateEventID: deriveContainerCreate(t),
@@ -37,7 +37,7 @@ func (t *Tracee) initEventDerivationMap() error {
 // deriveEvent takes a trace.Event and checks if it can derive additional events from it
 // as defined by tracee's eventDerivations map.
 // The map is initialized in the above function
-func (t *Tracee) deriveEvent(event trace.Event) []trace.Event {
+func (t *Manager) deriveEvent(event trace.Event) []trace.Event {
 	derivatives := []trace.Event{}
 	deriveFns := t.eventDerivations[int32(event.EventID)]
 	for id, deriveFn := range deriveFns {
@@ -66,7 +66,7 @@ func (t *Tracee) deriveEvent(event trace.Event) []trace.Event {
 
 //Receives a tracee object as a closure argument to track it's containers
 //If it receives a cgroup_mkdir event, it can derive a container_create event from it
-func deriveContainerCreate(t *Tracee) deriveFn {
+func deriveContainerCreate(t *Manager) deriveFn {
 	return func(event trace.Event) (trace.Event, bool, error) {
 		cgroupId, err := getEventArgUint64Val(&event, "cgroup_id")
 		if err != nil {
@@ -96,7 +96,7 @@ func deriveContainerCreate(t *Tracee) deriveFn {
 
 //Receives a tracee object as a closure argument to track it's containers
 //If it receives a cgroup_rmdir event, it can derive a container_remove event from it
-func deriveContainerRemoved(t *Tracee) deriveFn {
+func deriveContainerRemoved(t *Manager) deriveFn {
 	return func(event trace.Event) (trace.Event, bool, error) {
 		cgroupId, err := getEventArgUint64Val(&event, "cgroup_id")
 		if err != nil {
@@ -123,7 +123,7 @@ func deriveContainerRemoved(t *Tracee) deriveFn {
 	}
 }
 
-func deriveDetectHookedSyscall(t *Tracee) deriveFn {
+func deriveDetectHookedSyscall(t *Manager) deriveFn {
 	return func(event trace.Event) (trace.Event, bool, error) {
 		syscallsAdresses, err := getEventArgUlongArrVal(&event, "syscalls_addresses")
 		if err != nil {

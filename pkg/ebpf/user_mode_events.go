@@ -63,7 +63,7 @@ func fetchInitNamespaces() map[string]uint32 {
 	return initNamespacesMap
 }
 
-func (t *Tracee) CreateExistingContainersEvents() []trace.Event {
+func (t *Manager) CreateExistingContainersEvents() []trace.Event {
 	var events []trace.Event
 	def := EventsDefinitions[ExistingContainerEventID]
 	for _, info := range t.containers.GetContainers() {

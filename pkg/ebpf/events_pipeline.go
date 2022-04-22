@@ -18,7 +18,7 @@ import (
 const maxStackDepth int = 20
 
 // handleEvents is a high-level function that starts all operations related to events processing
-func (t *Tracee) handleEvents(ctx gocontext.Context) {
+func (t *Manager) handleEvents(ctx gocontext.Context) {
 	var errcList []<-chan error
 
 	// Source pipeline stage.
@@ -66,7 +66,7 @@ func (t *Tracee) handleEvents(ctx gocontext.Context) {
 // 3) create an internal, to tracee-ebpf, buffer based on the node size.
 
 // queueEvents implements an internal FIFO queue for caching events
-func (t *Tracee) queueEvents(ctx gocontext.Context, in <-chan *trace.Event) (chan *trace.Event, chan error) {
+func (t *Manager) queueEvents(ctx gocontext.Context, in <-chan *trace.Event) (chan *trace.Event, chan error) {
 	out := make(chan *trace.Event, 10000)
 	errc := make(chan error, 1)
 	done := make(chan struct{}, 1)
@@ -108,7 +108,7 @@ func (t *Tracee) queueEvents(ctx gocontext.Context, in <-chan *trace.Event) (cha
 }
 
 // decodeEvents read the events received from the BPF programs and parse it into trace.Event type
-func (t *Tracee) decodeEvents(outerCtx gocontext.Context) (<-chan *trace.Event, <-chan error) {
+func (t *Manager) decodeEvents(outerCtx gocontext.Context) (<-chan *trace.Event, <-chan error) {
 	out := make(chan *trace.Event)
 	errc := make(chan error, 1)
 	go func() {
@@ -193,7 +193,7 @@ func (t *Tracee) decodeEvents(outerCtx gocontext.Context) (<-chan *trace.Event, 
 	return out, errc
 }
 
-func (t *Tracee) processEvents(ctx gocontext.Context, in <-chan *trace.Event) <-chan error {
+func (t *Manager) processEvents(ctx gocontext.Context, in <-chan *trace.Event) <-chan error {
 	errc := make(chan error, 1)
 	go func() {
 		defer close(errc)
@@ -249,7 +249,7 @@ func (t *Tracee) processEvents(ctx gocontext.Context, in <-chan *trace.Event) <-
 	return errc
 }
 
-func (t *Tracee) getStackAddresses(StackID uint32) ([]uint64, error) {
+func (t *Manager) getStackAddresses(StackID uint32) ([]uint64, error) {
 	StackAddresses := make([]uint64, maxStackDepth)
 	stackFrameSize := (strconv.IntSize / 8)
 
@@ -280,7 +280,7 @@ func (t *Tracee) getStackAddresses(StackID uint32) ([]uint64, error) {
 }
 
 // WaitForPipeline waits for results from all error channels.
-func (t *Tracee) WaitForPipeline(errs ...<-chan error) error {
+func (t *Manager) WaitForPipeline(errs ...<-chan error) error {
 	errc := MergeErrors(errs...)
 	for err := range errc {
 		t.handleError(err)
@@ -319,7 +319,7 @@ func MergeErrors(cs ...<-chan error) <-chan error {
 	return out
 }
 
-func (t *Tracee) handleError(err error) {
+func (t *Manager) handleError(err error) {
 	t.stats.ErrorCount.Increment()
 	t.config.ChanErrors <- err
 }

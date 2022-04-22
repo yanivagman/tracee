@@ -14,7 +14,7 @@ import (
 )
 
 func Test_updateProfile(t *testing.T) {
-	trc := Tracee{
+	trc := Manager{
 		profiledFiles: make(map[string]profilerInfo),
 	}
 
@@ -48,7 +48,7 @@ func Test_updateProfile(t *testing.T) {
 }
 
 func Test_writeProfilerStats(t *testing.T) {
-	trc := Tracee{
+	trc := Manager{
 		profiledFiles: map[string]profilerInfo{
 			"bar": {
 				Times:    3,
@@ -95,7 +95,7 @@ func Test_updateFileSHA(t *testing.T) {
 		os.Remove(f.Name())
 	}()
 
-	trc := Tracee{
+	trc := Manager{
 		profiledFiles: map[string]profilerInfo{
 			fmt.Sprintf("%s/.%s:%d", d, strings.TrimPrefix(filepath.Base(f.Name()), fmt.Sprintf(".%d.", ts)), 1234): {
 				Times:            123,

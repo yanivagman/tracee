@@ -8,7 +8,7 @@ import (
 	"github.com/aquasecurity/tracee/types/trace"
 )
 
-func (t *Tracee) parseArgs(event *trace.Event) error {
+func (t *Manager) parseArgs(event *trace.Event) error {
 	for i := range event.Args {
 		if ptr, isUintptr := event.Args[i].Value.(uintptr); isUintptr {
 			event.Args[i].Value = "0x" + strconv.FormatUint(uint64(ptr), 16)

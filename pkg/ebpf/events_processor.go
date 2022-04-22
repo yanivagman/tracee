@@ -14,7 +14,7 @@ import (
 	"github.com/aquasecurity/tracee/types/trace"
 )
 
-func (t *Tracee) processLostEvents() {
+func (t *Manager) processLostEvents() {
 	for {
 		lost := <-t.lostEvChannel
 		// When terminating tracee-ebpf the lost channel receives multiple "0 lost events" events.
@@ -28,7 +28,7 @@ func (t *Tracee) processLostEvents() {
 }
 
 // shouldProcessEvent decides whether or not to drop an event before further processing it
-func (t *Tracee) shouldProcessEvent(ctx *bufferdecoder.Context, args []trace.Argument) bool {
+func (t *Manager) shouldProcessEvent(ctx *bufferdecoder.Context, args []trace.Argument) bool {
 	if t.config.Filter.RetFilter.Enabled {
 		if filter, ok := t.config.Filter.RetFilter.Filters[ctx.EventID]; ok {
 			retVal := ctx.Retval
@@ -92,7 +92,7 @@ func (t *Tracee) shouldProcessEvent(ctx *bufferdecoder.Context, args []trace.Arg
 	return true
 }
 
-func (t *Tracee) deleteProcInfoDelayed(hostTid int) {
+func (t *Manager) deleteProcInfoDelayed(hostTid int) {
 	// wait 5 seconds before deleting from the map - because there might events coming in the context of this process,
 	// after we receive its sched_process_exit. this mainly happens from network events, because these events come from
 	// the netChannel, and there might be a race condition between this channel and the eventsChannel.
@@ -100,7 +100,7 @@ func (t *Tracee) deleteProcInfoDelayed(hostTid int) {
 	t.procInfo.DeleteElement(hostTid)
 }
 
-func (t *Tracee) processEvent(event *trace.Event) error {
+func (t *Manager) processEvent(event *trace.Event) error {
 	switch int32(event.EventID) {
 
 	case VfsWriteEventID, VfsWritevEventID, __KernelWriteEventID:
@@ -410,7 +410,7 @@ func getEventArgInt32Val(event *trace.Event, argName string) (int32, error) {
 	return 0, fmt.Errorf("argument %s not found", argName)
 }
 
-func (t *Tracee) updateProfile(sourceFilePath string, executionTs uint64) {
+func (t *Manager) updateProfile(sourceFilePath string, executionTs uint64) {
 	if pf, ok := t.profiledFiles[sourceFilePath]; !ok {
 		t.profiledFiles[sourceFilePath] = profilerInfo{
 			Times:            1,

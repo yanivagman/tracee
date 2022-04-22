@@ -9,7 +9,7 @@ import (
 	"github.com/aquasecurity/tracee/pkg/bufferdecoder"
 )
 
-func (t *Tracee) processFileWrites() {
+func (t *Manager) processFileWrites() {
 
 	const (
 		S_IFMT uint32 = 0170000 // bit mask for the file type bit field

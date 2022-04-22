@@ -75,7 +75,7 @@ type processPcapId struct {
 	contID        string
 }
 
-func (t *Tracee) createPcapsDirPath(pcapContext processPcapId) (string, error) {
+func (t *Manager) createPcapsDirPath(pcapContext processPcapId) (string, error) {
 	pcapsDirPath := path.Join(t.config.Capture.OutputPath, pcapContext.contID)
 	err := os.MkdirAll(pcapsDirPath, os.ModePerm)
 	if err != nil {
@@ -85,7 +85,7 @@ func (t *Tracee) createPcapsDirPath(pcapContext processPcapId) (string, error) {
 	return pcapsDirPath, nil
 }
 
-func (t *Tracee) getPcapFilePath(pcapContext processPcapId) (string, error) {
+func (t *Manager) getPcapFilePath(pcapContext processPcapId) (string, error) {
 	pcapsDirPath, err := t.createPcapsDirPath(pcapContext)
 	if err != nil {
 		return "", err
@@ -101,7 +101,7 @@ func (t *Tracee) getPcapFilePath(pcapContext processPcapId) (string, error) {
 	return path.Join(pcapsDirPath, pcapFileName), nil
 }
 
-func (t *Tracee) createPcapFile(pcapContext processPcapId) (netPcap, error) {
+func (t *Manager) createPcapFile(pcapContext processPcapId) (netPcap, error) {
 	pcapFilePath, err := t.getPcapFilePath(pcapContext)
 	if err != nil {
 		return netPcap{}, fmt.Errorf("error getting pcap file path: %v", err)
@@ -152,7 +152,7 @@ func (t *Tracee) createPcapFile(pcapContext processPcapId) (netPcap, error) {
 	return pcap, nil
 }
 
-func (t *Tracee) netExit(pcapContext processPcapId) {
+func (t *Manager) netExit(pcapContext processPcapId) {
 	// wait a second before deleting from the map - because there might be more packets coming in
 	time.Sleep(time.Second * 1)
 
@@ -161,19 +161,19 @@ func (t *Tracee) netExit(pcapContext processPcapId) {
 	t.netInfo.pcapWriters.Remove(pcapContext)
 }
 
-func (t *Tracee) getHostPcapContext() processPcapId {
+func (t *Manager) getHostPcapContext() processPcapId {
 	return processPcapId{contID: "host"}
 }
 
-func (t *Tracee) getContainerPcapContext(containerId string) processPcapId {
+func (t *Manager) getContainerPcapContext(containerId string) processPcapId {
 	return processPcapId{contID: containerId}
 }
 
-func (t *Tracee) getProcessPcapContext(hostPid uint32, ProcessName string, procStartTime uint64, containerId string) processPcapId {
+func (t *Manager) getProcessPcapContext(hostPid uint32, ProcessName string, procStartTime uint64, containerId string) processPcapId {
 	return processPcapId{hostPid: hostPid, comm: ProcessName, procStartTime: procStartTime, contID: containerId}
 }
 
-func (t *Tracee) getPcapContextFromTid(hostTid uint32) (processPcapId, procinfo.ProcessCtx, error) {
+func (t *Manager) getPcapContextFromTid(hostTid uint32) (processPcapId, procinfo.ProcessCtx, error) {
 	pcapContext := t.getHostPcapContext()
 	networkThread, err := t.getProcessCtx(hostTid)
 	if err != nil {
@@ -200,7 +200,7 @@ func (t *Tracee) getPcapContextFromTid(hostTid uint32) (processPcapId, procinfo.
 	return pcapContext, networkThread, nil
 }
 
-func (t *Tracee) processNetEvents(ctx gocontext.Context) {
+func (t *Manager) processNetEvents(ctx gocontext.Context) {
 	// Todo: add stats for network packets (in epilog)
 	for {
 		select {
@@ -328,7 +328,7 @@ func (t *Tracee) processNetEvents(ctx gocontext.Context) {
 	}
 }
 
-func (t *Tracee) writePacket(capData bufferdecoder.NetCaptureData, timeStamp time.Time, packetContext processPcapId, packetBytes []byte) error {
+func (t *Manager) writePacket(capData bufferdecoder.NetCaptureData, timeStamp time.Time, packetContext processPcapId, packetBytes []byte) error {
 	iface, ok := t.netInfo.ifaces[int(capData.ConfigIfaceIndex)]
 	if !ok {
 		return fmt.Errorf("cannot get the right interface")
