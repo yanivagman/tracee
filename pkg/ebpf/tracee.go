@@ -583,16 +583,6 @@ func (t *Tracee) getFiltersConfig() uint32 {
 	return cFilterVal
 }
 
-// an enum that specifies the index of a function to be used in a bpf tail call
-// tail function indexes should match defined values in ebpf code for prog_array map
-const (
-	tailVfsWrite uint32 = iota
-	tailVfsWritev
-	tailSendBin
-	tailSendBinTP
-	tailKernelWrite
-)
-
 func (t *Tracee) populateBPFMaps() error {
 
 	// Set chosen events map according to events chosen by the user
@@ -772,29 +762,34 @@ func (t *Tracee) populateBPFMaps() error {
 
 	// Initialize tail call dependencies
 	tailCalls := make(map[tailCall]bool)
-	if t.config.Capture.FileWrite {
-		tailCalls[tailCall{mapName: "prog_array", mapIdx: tailVfsWrite, progName: "trace_ret_vfs_write_tail"}] = true
-		tailCalls[tailCall{mapName: "prog_array", mapIdx: tailVfsWritev, progName: "trace_ret_vfs_writev_tail"}] = true
-		tailCalls[tailCall{mapName: "prog_array", mapIdx: tailKernelWrite, progName: "trace_ret_kernel_write_tail"}] = true
-		tailCalls[tailCall{mapName: "prog_array", mapIdx: tailSendBin, progName: "send_bin"}] = true
-	}
-	if t.config.Capture.Module {
-		tailCalls[tailCall{mapName: "sys_enter_tails", mapIdx: uint32(InitModuleEventID), progName: "syscall__init_module"}] = true
-		tailCalls[tailCall{mapName: "prog_array_tp", mapIdx: tailSendBinTP, progName: "send_bin_tp"}] = true
-		tailCalls[tailCall{mapName: "prog_array", mapIdx: tailSendBin, progName: "send_bin"}] = true
-	}
-	if t.config.Capture.Mem {
-		tailCalls[tailCall{mapName: "prog_array", mapIdx: tailSendBin, progName: "send_bin"}] = true
-	}
 	for e := range t.events {
 		for _, tailCall := range EventsDefinitions[e].Dependencies.tailCalls {
 			tailCalls[tailCall] = true
 		}
 	}
 	for tailCall := range tailCalls {
-		err := t.initTailCall(tailCall.mapName, tailCall.mapIdx, tailCall.progName)
-		if err != nil {
-			return fmt.Errorf("failed to initialize tail call: %w", err)
+		init := false
+		switch tailCall.tailType {
+		case CaptureFile:
+			if t.config.Capture.FileWrite {
+				init = true
+			}
+		case CaptureModule:
+			if t.config.Capture.Module {
+				init = true
+			}
+		case CaptureMem:
+			if t.config.Capture.Mem {
+				init = true
+			}
+		case CaptureAlways:
+			init = true
+		}
+		if init {
+			err = t.initTailCall(tailCall.mapName, tailCall.mapIdx, tailCall.progName)
+			if err != nil {
+				return fmt.Errorf("failed to initialize tail call: %w", err)
+			}
 		}
 	}
 

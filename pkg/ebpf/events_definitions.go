@@ -32,10 +32,30 @@ type eventDependency struct {
 	eventID int32
 }
 
+// an enum that specifies the index of a function to be used in a bpf tail call
+// tail function indexes should match defined values in ebpf code for prog_array map
+const (
+	tailVfsWrite uint32 = iota
+	tailVfsWritev
+	tailSendBin
+	tailSendBinTP
+	tailKernelWrite
+)
+
+type tailType uint8
+
+const (
+	CaptureFile tailType = iota
+	CaptureModule
+	CaptureMem
+	CaptureAlways
+)
+
 type tailCall struct {
 	mapName  string
 	mapIdx   uint32
 	progName string
+	tailType tailType
 }
 
 // EventDefinition is a struct describing an event configuration
@@ -249,6 +269,11 @@ var EventsDefinitions = map[int32]EventDefinition{
 		Probes: []probe{
 			{event: "mmap", attach: sysCall, fn: "mmap"},
 		},
+		Dependencies: dependencies{
+			tailCalls: []tailCall{
+				{mapName: "prog_array", mapIdx: tailSendBin, progName: "send_bin", tailType: CaptureMem},
+			},
+		},
 		Sets: []string{"syscalls", "proc", "proc_mem"},
 		Params: []trace.ArgMeta{
 			{Type: "void*", Name: "addr"},
@@ -264,6 +289,11 @@ var EventsDefinitions = map[int32]EventDefinition{
 		Name:    "mprotect",
 		Probes: []probe{
 			{event: "mprotect", attach: sysCall, fn: "mprotect"},
+		},
+		Dependencies: dependencies{
+			tailCalls: []tailCall{
+				{mapName: "prog_array", mapIdx: tailSendBin, progName: "send_bin", tailType: CaptureMem},
+			},
 		},
 		Sets: []string{"syscalls", "proc", "proc_mem"},
 		Params: []trace.ArgMeta{
@@ -887,7 +917,7 @@ var EventsDefinitions = map[int32]EventDefinition{
 		},
 		Dependencies: dependencies{
 			tailCalls: []tailCall{
-				{mapName: "sys_enter_tails", mapIdx: uint32(ExecveEventID), progName: "syscall__execve"},
+				{mapName: "sys_enter_tails", mapIdx: uint32(ExecveEventID), progName: "syscall__execve", tailType: CaptureAlways},
 			},
 		},
 		Sets: []string{"default", "syscalls", "proc", "proc_life"},
@@ -2259,6 +2289,13 @@ var EventsDefinitions = map[int32]EventDefinition{
 		Name:    "init_module",
 		Probes: []probe{
 			{event: "init_module", attach: sysCall, fn: "init_module"},
+		},
+		Dependencies: dependencies{
+			tailCalls: []tailCall{
+				{mapName: "sys_enter_tails", mapIdx: uint32(InitModuleEventID), progName: "syscall__init_module", tailType: CaptureModule},
+				{mapName: "prog_array_tp", mapIdx: tailSendBinTP, progName: "send_bin_tp", tailType: CaptureModule},
+				{mapName: "prog_array", mapIdx: tailSendBin, progName: "send_bin", tailType: CaptureModule},
+			},
 		},
 		Sets: []string{"default", "syscalls", "system", "system_module"},
 		Params: []trace.ArgMeta{
@@ -4168,7 +4205,7 @@ var EventsDefinitions = map[int32]EventDefinition{
 		},
 		Dependencies: dependencies{
 			tailCalls: []tailCall{
-				{mapName: "sys_enter_tails", mapIdx: uint32(ExecveatEventID), progName: "syscall__execveat"},
+				{mapName: "sys_enter_tails", mapIdx: uint32(ExecveatEventID), progName: "syscall__execveat", tailType: CaptureAlways},
 			},
 		},
 		Sets: []string{"default", "syscalls", "proc", "proc_life"},
@@ -5816,6 +5853,12 @@ var EventsDefinitions = map[int32]EventDefinition{
 			{event: "vfs_write", attach: kprobe, fn: "trace_vfs_write"},
 			{event: "vfs_write", attach: kretprobe, fn: "trace_ret_vfs_write"},
 		},
+		Dependencies: dependencies{
+			tailCalls: []tailCall{
+				{mapName: "prog_array", mapIdx: tailVfsWrite, progName: "trace_ret_vfs_write_tail", tailType: CaptureFile},
+				{mapName: "prog_array", mapIdx: tailSendBin, progName: "send_bin", tailType: CaptureFile},
+			},
+		},
 		Sets: []string{},
 		Params: []trace.ArgMeta{
 			{Type: "const char*", Name: "pathname"},
@@ -5832,6 +5875,12 @@ var EventsDefinitions = map[int32]EventDefinition{
 			{event: "vfs_writev", attach: kprobe, fn: "trace_vfs_writev"},
 			{event: "vfs_writev", attach: kretprobe, fn: "trace_ret_vfs_writev"},
 		},
+		Dependencies: dependencies{
+			tailCalls: []tailCall{
+				{mapName: "prog_array", mapIdx: tailVfsWritev, progName: "trace_ret_vfs_writev_tail", tailType: CaptureFile},
+				{mapName: "prog_array", mapIdx: tailSendBin, progName: "send_bin", tailType: CaptureFile},
+			},
+		},
 		Sets: []string{},
 		Params: []trace.ArgMeta{
 			{Type: "const char*", Name: "pathname"},
@@ -5847,6 +5896,11 @@ var EventsDefinitions = map[int32]EventDefinition{
 		Probes: []probe{
 			{event: "security_mmap_addr", attach: kprobe, fn: "trace_mmap_alert"},
 			{event: "security_file_mprotect", attach: kprobe, fn: "trace_mprotect_alert"},
+		},
+		Dependencies: dependencies{
+			tailCalls: []tailCall{
+				{mapName: "prog_array", mapIdx: tailSendBin, progName: "send_bin", tailType: CaptureMem},
+			},
 		},
 		Sets: []string{},
 		Params: []trace.ArgMeta{
@@ -6087,6 +6141,11 @@ var EventsDefinitions = map[int32]EventDefinition{
 		Probes: []probe{
 			{event: "security_kernel_read_file", attach: kprobe, fn: "trace_security_kernel_read_file"},
 		},
+		Dependencies: dependencies{
+			tailCalls: []tailCall{
+				{mapName: "prog_array", mapIdx: tailSendBin, progName: "send_bin", tailType: CaptureModule},
+			},
+		},
 		Sets: []string{"lsm_hooks"},
 		Params: []trace.ArgMeta{
 			{Type: "const char*", Name: "pathname"},
@@ -6158,9 +6217,9 @@ var EventsDefinitions = map[int32]EventDefinition{
 		Probes:  []probe{},
 		Dependencies: dependencies{
 			tailCalls: []tailCall{
-				{mapName: "sys_exit_tails", mapIdx: uint32(DupEventID), progName: "sys_dup_exit_tail"},
-				{mapName: "sys_exit_tails", mapIdx: uint32(Dup2EventID), progName: "sys_dup_exit_tail"},
-				{mapName: "sys_exit_tails", mapIdx: uint32(Dup3EventID), progName: "sys_dup_exit_tail"},
+				{mapName: "sys_exit_tails", mapIdx: uint32(DupEventID), progName: "sys_dup_exit_tail", tailType: CaptureAlways},
+				{mapName: "sys_exit_tails", mapIdx: uint32(Dup2EventID), progName: "sys_dup_exit_tail", tailType: CaptureAlways},
+				{mapName: "sys_exit_tails", mapIdx: uint32(Dup3EventID), progName: "sys_dup_exit_tail", tailType: CaptureAlways},
 			},
 		},
 		Sets: []string{},
@@ -6187,6 +6246,12 @@ var EventsDefinitions = map[int32]EventDefinition{
 		Probes: []probe{
 			{event: "__kernel_write", attach: kprobe, fn: "trace_kernel_write"},
 			{event: "__kernel_write", attach: kretprobe, fn: "trace_ret_kernel_write"},
+		},
+		Dependencies: dependencies{
+			tailCalls: []tailCall{
+				{mapName: "prog_array", mapIdx: tailKernelWrite, progName: "trace_ret_kernel_write_tail", tailType: CaptureFile},
+				{mapName: "prog_array", mapIdx: tailSendBin, progName: "send_bin", tailType: CaptureFile},
+			},
 		},
 		Sets: []string{},
 		Params: []trace.ArgMeta{
