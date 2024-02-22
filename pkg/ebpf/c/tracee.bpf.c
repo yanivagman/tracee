@@ -253,6 +253,9 @@ SEC("raw_tracepoint/sys_exit_submit")
 int sys_exit_submit(struct bpf_raw_tracepoint_args *ctx)
 {
     program_data_t p = {};
+
+    u64 time = bpf_ktime_get_ns();
+
     if (!init_program_data(&p, ctx))
         return 0;
 
@@ -273,6 +276,21 @@ int sys_exit_submit(struct bpf_raw_tracepoint_args *ctx)
     save_args_to_submit_buf(p.event, &sys->args);
     p.event->context.ts = sys->ts;
     events_perf_submit(&p, sys->id, ret);
+
+    time = bpf_ktime_get_ns() - time;
+    int zero = 0;
+    stats_t *stats = bpf_map_lookup_elem(&stats_map, &zero);
+    if (unlikely(stats == NULL))
+        return 0;
+    stats->runtime += time;
+    stats->count += 1;
+    if ((stats->count % 10) == 0) {
+        reset_event_args(&p);
+        save_to_submit_buf(&p.event->args_buf, (void *) &stats->runtime, sizeof(unsigned long), 0);
+        save_to_submit_buf(&p.event->args_buf, (void *) &stats->count, sizeof(unsigned long), 1);
+        events_perf_submit(&p, STATS, 0);
+        reset_event_args(&p);
+    }
 
 out:
     bpf_tail_call(ctx, &sys_exit_tails, sys->id);

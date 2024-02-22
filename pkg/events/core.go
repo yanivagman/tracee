@@ -105,6 +105,7 @@ const (
 	HiddenKernelModuleSeeker
 	ModuleLoad
 	ModuleFree
+	Stats
 	MaxCommonID
 )
 
@@ -12475,6 +12476,17 @@ var CoreEvents = map[ID]Definition{
 			{Type: "const char*", Name: "name"},
 			{Type: "const char*", Name: "version"},
 			{Type: "const char*", Name: "src_version"},
+		},
+	},
+	Stats: {
+		id:      Stats,
+		id32Bit: Sys32Undefined,
+		name:    "stats",
+		version: NewVersion(1, 0, 0),
+		sets: []string{},
+		params: []trace.ArgMeta{
+			{Type: "unsigned long", Name: "runtime"},
+			{Type: "unsigned long", Name: "count"},
 		},
 	},
 	SocketAccept: {

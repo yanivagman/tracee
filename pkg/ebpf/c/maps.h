@@ -54,6 +54,14 @@ struct args_map {
     __type(value, args_t);
 } args_map SEC(".maps");
 
+// collect stats
+struct stats_map {
+    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, u32);
+    __type(value, stats_t);
+} stats_map SEC(".maps");
+
 typedef struct args_map args_map_t;
 
 // map 32bit to 64bit syscalls

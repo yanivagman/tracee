@@ -124,6 +124,7 @@ enum event_id_e
     HIDDEN_KERNEL_MODULE_SEEKER,
     MODULE_LOAD,
     MODULE_FREE,
+    STATS,
     MAX_EVENT_ID,
 };
 
@@ -139,6 +140,11 @@ enum signal_event_id_e
 typedef struct args {
     unsigned long args[6];
 } args_t;
+
+typedef struct stats {
+    unsigned long runtime;
+    unsigned long count;
+} stats_t;
 
 enum argument_type_e
 {
