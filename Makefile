@@ -1,5 +1,5 @@
 .PHONY: all | env
-all: tracee-ebpf tracee-rules signatures tracee evt traceectl
+all: tracee-ebpf tracee-rules tracee evt traceectl
 
 #
 # make
@@ -638,29 +638,29 @@ GOSIGNATURES_SRC :=	$(shell find $(GOSIGNATURES_DIR) \
 			! -path '$(GOSIGNATURES_DIR)/examples/*' \
 			)
 
-GO_TAGS_SIGNATURES ?=
+# GO_TAGS_SIGNATURES ?=
 
-.PHONY: signatures
-signatures: $(OUTPUT_DIR)/signatures
+# .PHONY: signatures
+# signatures: $(OUTPUT_DIR)/signatures
 
-$(OUTPUT_DIR)/signatures: \
-	$(GOSIGNATURES_SRC) \
-	| .eval_goenv \
-	.checkver_$(CMD_GO) \
-	.check_$(CMD_INSTALL) \
-	$(OUTPUT_DIR)
-#
-	$(CMD_MKDIR) -p $@
-	$(GO_ENV_EBPF) $(CMD_GO) build \
-		--buildmode=plugin \
-		$(if $(GO_TAGS_SIGNATURES),-tags $(GO_TAGS_SIGNATURES),) \
-		-o $@/builtin.so \
-		$(GOSIGNATURES_SRC)
+# $(OUTPUT_DIR)/signatures: \
+# 	$(GOSIGNATURES_SRC) \
+# 	| .eval_goenv \
+# 	.checkver_$(CMD_GO) \
+# 	.check_$(CMD_INSTALL) \
+# 	$(OUTPUT_DIR)
+# #
+# 	$(CMD_MKDIR) -p $@
+# 	$(GO_ENV_EBPF) $(CMD_GO) build \
+# 		--buildmode=plugin \
+# 		$(if $(GO_TAGS_SIGNATURES),-tags $(GO_TAGS_SIGNATURES),) \
+# 		-o $@/builtin.so \
+# 		$(GOSIGNATURES_SRC)
 
-.PHONY: clean-signatures
-clean-signatures:
-#
-	$(CMD_RM) -rf $(OUTPUT_DIR)/signatures
+# .PHONY: clean-signatures
+# clean-signatures:
+# #
+# 	$(CMD_RM) -rf $(OUTPUT_DIR)/signatures
 
 #
 # other commands

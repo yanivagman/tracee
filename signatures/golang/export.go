@@ -1,9 +1,9 @@
-package main
+package signatures
 
 import "github.com/aquasecurity/tracee/types/detect"
 
-// ExportedSignatures fulfills the goplugins contract required by the rule-engine
-// this is a list of signatures that this plugin exports
+// ExportedSignatures provides the list of signatures that were previously
+// exported as a plugin, now compiled directly into the binary
 var ExportedSignatures = []detect.Signature{
 	&StdioOverSocket{},
 	&K8sApiConnection{},
@@ -37,8 +37,8 @@ var ExportedSignatures = []detect.Signature{
 	&DroppedExecutable{},
 }
 
-// ExportedDataSources fulfills the goplugins contract required by the rule-engine
-// this is a list of data-sources that this plugin exports
+// ExportedDataSources provides the list of data sources that were previously
+// exported as a plugin, now compiled directly into the binary
 var ExportedDataSources = []detect.DataSource{
 	// add data-sources here
 }

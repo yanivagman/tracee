@@ -1,4 +1,4 @@
-package main
+package signatures
 
 import "github.com/aquasecurity/tracee/pkg/events/parsers"
 
